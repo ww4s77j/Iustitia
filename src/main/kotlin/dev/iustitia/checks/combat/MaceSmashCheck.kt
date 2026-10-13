@@ -8,8 +8,8 @@ import dev.iustitia.history.Evidence
 import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
-import net.minecraft.item.MaceItem
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.item.MaceItem
+import net.minecraft.world.phys.Vec3
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.abs
@@ -59,7 +59,7 @@ class MaceSmashCheck : Check() {
             // hand at the attack tick (the deferred eval tick may follow a hotbar swap),
             // and the alert position is the attack-tick pos, not the eval-tick pos.
             ctx.pendingAttack = ev.tick
-            ctx.attackMaceHeld = try { tp.entity?.mainHandStack?.item is MaceItem } catch (_: Throwable) { false }
+            ctx.attackMaceHeld = try { tp.entity?.mainHandItem?.item is MaceItem } catch (_: Throwable) { false }
             ctx.attackPos = tp.pos
         } catch (_: Throwable) {}
     }
@@ -135,7 +135,7 @@ class MaceSmashCheck : Check() {
         /** Whether the attacker held a mace at the attack tick (snapshot in onAttack). */
         var attackMaceHeld: Boolean = false
         /** Attacker position at the attack tick (alert evidence pos). */
-        var attackPos: Vec3d? = null
+        var attackPos: Vec3? = null
         /** Last attack tick we already flagged — dedup so one smash = one flag. */
         var lastFlaggedAttack: Int = Int.MIN_VALUE
     }

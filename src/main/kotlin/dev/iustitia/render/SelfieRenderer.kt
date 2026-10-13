@@ -1,8 +1,8 @@
 package dev.iustitia.render
 
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.util.ScreenshotRecorder
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents
+import net.minecraft.client.Minecraft
+import net.minecraft.client.Screenshot
 import java.util.function.Consumer
 
 /**
@@ -13,7 +13,7 @@ import java.util.function.Consumer
  *
  * On a frame where [OffenderCapture.frameActive] is raised, this screenshots the main framebuffer
  * to the armed request's `snapshots/<tick>_<name>.png` and echoes the vanilla "saved / error"
- * [net.minecraft.text.Text] to chat (clickable file link). Then it clears the capture state so the
+ * [net.minecraft.network.chat.Component] to chat (clickable file link). Then it clears the capture state so the
  * camera reverts next frame. Fail-open throughout; the `finally` clear is what enforces the
  * single-frame guarantee even if the GL read throws.
  *
@@ -25,15 +25,17 @@ object SelfieRenderer {
 
     fun register() {
         try {
-            WorldRenderEvents.END_MAIN.register(WorldRenderEvents.EndMain { _ ->
+            // 26.3 replacement for WorldRenderEvents.END_MAIN (same late-frame timing intent;
+            // exact phase semantics are runtime-verifiable).
+            LevelRenderEvents.END_MAIN.register(LevelRenderEvents.EndMain { _ ->
                 try {
                     val req = OffenderCapture.activeReq
                     if (req == null || !OffenderCapture.frameActive) return@EndMain
-                    val mc = MinecraftClient.getInstance()
-                    val fb = mc.framebuffer ?: return@EndMain
-                    ScreenshotRecorder.saveScreenshot(
+                    val mc = Minecraft.getInstance()
+                    val fb = mc.gameRenderer.mainRenderTarget() ?: return@EndMain
+                    Screenshot.grab(
                         req.dir, req.file, fb, 1,
-                        Consumer { msg -> try { mc.inGameHud?.chatHud?.addMessage(msg) } catch (_: Throwable) {} }
+                        Consumer { msg -> try { mc.gui.hud.chat.addClientSystemMessage(msg) } catch (_: Throwable) {} }
                     )
                 } catch (_: Throwable) {
                     // The finally clears state so the camera can't stay overridden.

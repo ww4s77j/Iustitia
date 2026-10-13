@@ -1,7 +1,7 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.render.SectionRenderState
+import net.minecraft.client.renderer.chunk.ChunkSectionsToRender
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -15,8 +15,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  *
  * ## Target + why this is the surgical point
  *
- * `WorldRenderer.method_62214` (the main render pass, unrenamed in yarn 1.21.11) draws every terrain
- * layer — SOLID / CUTOUT / CUTOUT_MIPPED / TRANSLUCENT — by calling `SectionRenderState.renderSection(
+ * `LevelRenderer.method_62214` (the main render pass, unrenamed in yarn 1.21.11) draws every terrain
+ * layer — SOLID / CUTOUT / CUTOUT_MIPPED / TRANSLUCENT — by calling `ChunkSectionsToRender.renderSection(
  * BlockRenderLayerGroup, GpuSampler)` (three calls: the opaque layers, then the translucent layer
  * after entities). Canceling `renderSection` at HEAD skips ALL terrain layers, while **entities keep
  * rendering** (they dispatch via `RenderDispatcher.render`, a separate call in `method_62214`) and the
@@ -34,15 +34,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  *
  * ## Runtime-only-verifiable (per project convention for render-path mixins)
  *
- * The `SectionRenderState.renderSection` target + signature are verified against the named
+ * The `ChunkSectionsToRender.renderSection` target + signature are verified against the named
  * 1.21.11 jar (it's a `final record` with `public void renderSection(BlockRenderLayerGroup, GpuSampler)`).
  * `defaultRequire: 1` means a mismatch fails launch — the build can't confirm mixin-apply, only a live
  * client run can. If it ever fails at runtime, the gate is the single point to flip.
  */
-@Mixin(SectionRenderState::class)
+@Mixin(ChunkSectionsToRender::class)
 class SectionRenderStateMixin {
 
-    @Inject(method = ["renderSection"], at = [At("HEAD")], cancellable = true)
+    @Inject(method = ["renderGroup"], at = [At("HEAD")], cancellable = true)
     private fun iustitia_suppressLiveTerrain(ci: CallbackInfo) {
         try {
             // Legacy playclip never has chunks (ReplayState.start nulls them) and must show the live

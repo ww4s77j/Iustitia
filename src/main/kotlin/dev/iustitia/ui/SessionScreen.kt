@@ -3,10 +3,10 @@ package dev.iustitia.ui
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.tracking.EntityTrackerManager
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.Click
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.text.Text
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.network.chat.Component
 import java.util.UUID
 
 /**
@@ -27,7 +27,7 @@ class SessionScreen(private val parent: Screen?) : Screen(TITLE) {
     private var summary: Summary = Summary(0, 0, 0, 0, 0, null, 0, emptyList())
     private var compact: Boolean = false
 
-    override fun shouldPause(): Boolean = false
+    override fun isPauseScreen(): Boolean = false
 
     override fun init() {
         try { compact = ConfigManager.config.compactMode; rebuild() } catch (_: Throwable) {}
@@ -56,47 +56,50 @@ class SessionScreen(private val parent: Screen?) : Screen(TITLE) {
         }
     }
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+    override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
         try {
             context.fill(0, 0, this.width, this.height, BG)
-            super.render(context, mouseX, mouseY, delta)
-            val tr = this.textRenderer
+            super.extractRenderState(context, mouseX, mouseY, delta)
+            val tr = this.font
             val s = summary
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lSession summary"), 10, 10, WHITE)
+            context.text(tr, Component.literal("§8[§diustitia§8] §f§lSession summary"), 10, 10, WHITE)
             if (compact) {
-                context.drawTextWithShadow(tr, Text.literal(
+                context.text(tr, Component.literal(
                     "§7players §f${s.total} §7| §aG§f${s.green} §eY§f${s.yellow} §cR§f${s.red} §7| alerts §f${s.totalAlerts}" +
                     (s.peakName?.let { " §7| peak §f$it§7[${s.peakScore}]" } ?: "")
                 ), 10, 28, WHITE)
                 return
             }
             var y = 30
-            context.drawTextWithShadow(tr, Text.literal("§7players tracked: §f${s.total}"), 10, y, WHITE); y += 12
-            context.drawTextWithShadow(tr, Text.literal(" §aGREEN §f${s.green}   §eYELLOW §f${s.yellow}   §cRED §f${s.red}"), 10, y, WHITE); y += 16
-            context.drawTextWithShadow(tr, Text.literal("§7alerts this session: §f${s.totalAlerts}"), 10, y, WHITE); y += 12
+            context.text(tr, Component.literal("§7players tracked: §f${s.total}"), 10, y, WHITE); y += 12
+            context.text(tr, Component.literal(" §aGREEN §f${s.green}   §eYELLOW §f${s.yellow}   §cRED §f${s.red}"), 10, y, WHITE); y += 16
+            context.text(tr, Component.literal("§7alerts this session: §f${s.totalAlerts}"), 10, y, WHITE); y += 12
             if (s.peakName != null && s.peakScore > 0) {
-                context.drawTextWithShadow(tr, Text.literal("§7peaked highest: §f${s.peakName} §7[${s.peakScore}]"), 10, y, WHITE); y += 16
+                context.text(tr, Component.literal("§7peaked highest: §f${s.peakName} §7[${s.peakScore}]"), 10, y, WHITE); y += 16
             } else y += 8
-            context.drawTextWithShadow(tr, Text.literal("§8top offenders (by alert count):"), 10, y, WHITE); y += 12
+            context.text(tr, Component.literal("§8top offenders (by alert count):"), 10, y, WHITE); y += 12
             if (s.top.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7(no alerts yet this session)"), 14, y, WHITE)
+                context.text(tr, Component.literal("§7(no alerts yet this session)"), 14, y, WHITE)
             } else {
                 s.top.forEach { (name, count) ->
-                    context.drawTextWithShadow(tr, Text.literal(" §f$name §7$count"), 14, y, WHITE); y += 12
+                    context.text(tr, Component.literal(" §f$name §7$count"), 14, y, WHITE); y += 12
                 }
             }
         } catch (_: Throwable) {}
     }
 
-    override fun mouseClicked(click: Click, button: Boolean): Boolean {
+    override fun mouseClicked(click: MouseButtonEvent, button: Boolean): Boolean {
         try { if (super.mouseClicked(click, button)) return true } catch (_: Throwable) {}
         return false
     }
 
-    override fun close() { client?.setScreen(parent) }
+    override fun onClose() {
+        val p = parent
+        if (p != null) minecraft.setScreenAndShow(p) else minecraft.gui.setScreen(null)
+    }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — session")
+        private val TITLE = Component.literal("Iustitia — session")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
     }

@@ -1,11 +1,11 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.network.OtherClientPlayerEntity
-import net.minecraft.client.render.Frustum
-import net.minecraft.client.render.entity.EntityRenderer
-import net.minecraft.entity.Entity
+import net.minecraft.client.Minecraft
+import net.minecraft.client.player.RemotePlayer
+import net.minecraft.client.renderer.culling.Frustum
+import net.minecraft.client.renderer.entity.EntityRenderer
+import net.minecraft.world.entity.Entity
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  *
  * ## Why `shouldRender` on the base `EntityRenderer`
  *
- * The per-player renderer (`PlayerEntityRenderer`) does NOT override `shouldRender` (it inherits it),
+ * The per-player renderer (`AvatarRenderer`) does NOT override `shouldRender` (it inherits it),
  * so a mixin there can't target it. `EntityRenderer` is where the method actually lives in bytecode
  * (verified: `public boolean shouldRender(T, Frustum, double, double, double)`), and it is the root
  * of the renderer hierarchy, so injecting here covers every player renderer that calls `super`.
@@ -30,9 +30,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  *
  * ## Telling self apart from the other players
  *
- * `ClientPlayerEntity` and `OtherClientPlayerEntity` are SIBLINGS in yarn 1.21.11, both extending
+ * `LocalPlayer` and `RemotePlayer` are SIBLINGS in yarn 1.21.11, both extending
  * `AbstractClientPlayerEntity` (verified with javap against the mapped jar). An
- * `as? OtherClientPlayerEntity` cast is therefore null for the local player: it identifies the OTHER
+ * `as? RemotePlayer` cast is therefore null for the local player: it identifies the OTHER
  * players only. That is convenient for the other-player rule, but it means any self branch placed
  * after such a cast is unreachable dead code, which is the trap the shape below is written to avoid.
  * `isSelf` comes from the entity's uuid, and the branching itself is delegated to
@@ -70,8 +70,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  * overwhelming common case), this mixin does one volatile read + an `as?` cast + early return —
  * negligible. Whole-body fail-open so a render error never crashes the frame.
  *
- * Target verified against yarn 1.21.11: `EntityRenderer.shouldRender(Lnet/minecraft/entity/Entity;
- * Lnet/minecraft/client/render/Frustum;DDD)Z` (T erases to `Entity`).
+ * Target verified against the 26.3 jar: `EntityRenderer.shouldRender(T, Frustum, double, double,
+ * double, float): boolean` (T erases to `Entity`; 26.3 added the trailing partial-tick float, which
+ * this handler ignores).
  */
 @Mixin(EntityRenderer::class)
 abstract class EntityRendererMixin {
@@ -83,6 +84,7 @@ abstract class EntityRendererMixin {
         x: Double,
         y: Double,
         z: Double,
+        tickProgress: Float,
         cir: CallbackInfoReturnable<Boolean>,
     ) {
         try {
@@ -90,12 +92,12 @@ abstract class EntityRendererMixin {
             // The decision itself lives in ReplayState.shouldHideEntity so the gametest suite can drive
             // every branch without a live render pass (the scenario replay-show-self does). Only the
             // facts that need the entity are computed here, and `isOtherPlayer` is passed as a flag
-            // rather than used as an early return: an `as? OtherClientPlayerEntity` guard placed above a
+            // rather than used as an early return: an `as? RemotePlayer` guard placed above a
             // self branch would make that branch unreachable (see the class doc).
             if (ReplayState.shouldHideEntity(
                     isModernChunkWorld = ReplayState.chunks != null && !ReplayState.legacyPlayclip,
-                    isSelf = entity.uuid == MinecraftClient.getInstance().player?.uuid,
-                    isOtherPlayer = entity is OtherClientPlayerEntity,
+                    isSelf = entity.uuid == Minecraft.getInstance().player?.uuid,
+                    isOtherPlayer = entity is RemotePlayer,
                 )
             ) {
                 cir.setReturnValue(false)

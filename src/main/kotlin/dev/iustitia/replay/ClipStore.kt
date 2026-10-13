@@ -1,13 +1,15 @@
 package dev.iustitia.replay
 
+import dev.iustitia.util.LegacyStoreMigration
 import net.fabricmc.loader.api.FabricLoader
 import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * `.iusclip` file storage. Clips are written to `%APPDATA%/.iustitia/clips` on Windows (roaming, so
- * a multi-instance Modrinth user finds them in one place regardless of instance path) and to the
- * game-dir `.iustitia/clips` elsewhere.
+ * `.iusclip` file storage. Clips are written to `<gameDir>/.iustitia/clips` — inside the game's own
+ * folder (for a launcher instance, that is the instance's `minecraft/` directory), never anywhere
+ * else. Clips exported by builds up to v1.4.0 were recovered once from the legacy roaming store at
+ * first use (see [dev.iustitia.util.LegacyStoreMigration]).
  *
  * Unlike the passive persistence store ([dev.iustitia.persistence.PersistenceManager], gated by
  * [dev.iustitia.config.IustitiaConfig.persistenceEnabled]), a clip is an EXPLICIT user export
@@ -18,12 +20,12 @@ object ClipStore {
 
     private const val EXT = ".iusclip"
 
-    /** Roaming clips dir, created if missing. `%APPDATA%/.iustitia/clips` on Windows, game-dir elsewhere. */
+    /** Clips dir, created if missing: `<gameDir>/.iustitia/clips` - inside the game's own folder.
+     *  First access also runs the one-time legacy-store migration (pre-v1.4.1 clips). */
     private val clipsDir: Path by lazy {
-        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
-        val base = if (appdata != null) Path.of(appdata).resolve(".iustitia")
-        else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-        base.resolve("clips")
+        val dir = FabricLoader.getInstance().gameDir.resolve(".iustitia").resolve("clips")
+        LegacyStoreMigration.migrate("clips", dir) { it.endsWith(EXT) }
+        dir
     }
 
     /** A display name (no extension) for each `.iusclip` in the dir, sorted. Empty if none / error. */

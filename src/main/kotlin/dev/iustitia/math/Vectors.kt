@@ -1,6 +1,6 @@
 package dev.iustitia.math
 
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.phys.Vec3
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -14,14 +14,14 @@ import kotlin.math.sin
  */
 object Vectors {
 
-    fun lookVector(yawDeg: Double, pitchDeg: Double): Vec3d {
+    fun lookVector(yawDeg: Double, pitchDeg: Double): Vec3 {
         val yaw = Math.toRadians(yawDeg)
         val pitch = Math.toRadians(pitchDeg)
         val cp = cos(pitch)
         val x = -sin(yaw) * cp
         val y = -sin(pitch)
         val z = cos(yaw) * cp
-        return Vec3d(x, y, z)
+        return Vec3(x, y, z)
     }
 
     /** Wrap an angle to [-180, 180). */

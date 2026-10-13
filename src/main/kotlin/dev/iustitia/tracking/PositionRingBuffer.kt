@@ -1,6 +1,6 @@
 package dev.iustitia.tracking
 
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.phys.Vec3
 
 /**
  * Fixed-capacity ring buffer of (tick, position) samples per tracked player.
@@ -17,10 +17,10 @@ import net.minecraft.util.math.Vec3d
  * - [forEachRecent] hands the raw components to a callback and allocates nothing. Use it whenever
  *   the consumer only aggregates — a spread, a min/max, a consecutive-distance test — which is
  *   most of them.
- * - [getPositions] materializes `Vec3d` objects for consumers that must hold or hand on individual
+ * - [getPositions] materializes `Vec3` objects for consumers that must hold or hand on individual
  *   positions (candidate hitbox lists, stored samples).
  *
- * Prefer [forEachRecent]: a `Vec3d` per sample per call adds up across a fight, and the aggregating
+ * Prefer [forEachRecent]: a `Vec3` per sample per call adds up across a fight, and the aggregating
  * callers gained nothing from the objects.
  *
  * [forEachRecent] does NOT catch: the callback runs inline, so a throwing callback propagates and
@@ -35,7 +35,7 @@ class PositionRingBuffer(val capacity: Int = 24) {
     private var head = 0
     private var size = 0
 
-    fun add(tick: Int, pos: Vec3d) {
+    fun add(tick: Int, pos: Vec3) {
         try {
             ticks[head] = tick
             xs[head] = pos.x
@@ -49,15 +49,15 @@ class PositionRingBuffer(val capacity: Int = 24) {
     }
 
     /** Positions sampled within the last [maxAgeTicks] (newest first). */
-    fun getPositions(maxAgeTicks: Int, currentTick: Int): List<Vec3d> {
+    fun getPositions(maxAgeTicks: Int, currentTick: Int): List<Vec3> {
         if (maxAgeTicks <= 0 || size == 0) return emptyList()
         return try {
-            val out = ArrayList<Vec3d>(size)
+            val out = ArrayList<Vec3>(size)
             val threshold = currentTick - maxAgeTicks
             for (i in 0 until size) {
                 val idx = (head - 1 - i + capacity) % capacity
                 if (ticks[idx] > threshold) {
-                    out.add(Vec3d(xs[idx], ys[idx], zs[idx]))
+                    out.add(Vec3(xs[idx], ys[idx], zs[idx]))
                 }
             }
             out

@@ -20,7 +20,7 @@
   ],
   "depends": {
     "fabricloader": ">=0.19.3",
-    "minecraft": "~1.21.11",
+    "minecraft": "~${minecraft}",
     "fabric-api": "*",
     "fabric-language-kotlin": "*",
     "yet_another_config_lib_v3": "*"

@@ -1,18 +1,18 @@
 package dev.iustitia.chathist
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.text.Text
+import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
 import java.util.UUID
 
 /**
  * Decorated-chat capture for `/ius chathist`. The signed player-chat path
- * ([ChatMessageS2CPacket][net.minecraft.network.packet.s2c.play.ChatMessageS2CPacket], handled in
+ * ([ClientboundPlayerChatPacket][net.minecraft.network.protocol.game.ClientboundPlayerChatPacket], handled in
  * [dev.iustitia.mixin.ClientPlayNetworkHandlerMixin.iustitia_onChatMessage]) only fires on servers
  * that keep chat signing. The servers most users want chathist on — Hypixel, ArchMC, Minemen,
  * Cavern, EvoxMC, Stray, mcpvp, PvpHQ, Mineplex — broadcast decorated chat
  * (`[rank] [stars] username ❣: message`) as **system/game messages**
- * ([GameMessageS2CPacket][net.minecraft.network.packet.s2c.play.GameMessageS2CPacket]) or
- * **profileless chat** ([ProfilelessChatMessageS2CPacket][net.minecraft.network.packet.s2c.play.ProfilelessChatMessageS2CPacket]),
+ * ([ClientboundSystemChatPacket][net.minecraft.network.protocol.game.ClientboundSystemChatPacket]) or
+ * **profileless chat** ([ClientboundDisguisedChatPacket][net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket]),
  * neither of which carries a sender UUID. This parser recovers `(username, message)` from those
  * paths.
  *
@@ -20,7 +20,7 @@ import java.util.UUID
  *
  * Every non-Mineplex decorated format is `<decorations> USERNAME <optional suffix> <SEP> <message>`
  * where `SEP` ∈ {`:`, `»`, `→`, `➠`}. The parser:
- *  1. strips `§` color codes from the flattened [Text.getString];
+ *  1. strips `§` color codes from the flattened [Component.getString];
  *  2. finds the **first** separator (first, so a `:` inside the message — `PvpHQ "hello, world!"`,
  *     mcpvp long lines — is ignored; the sender's separator is always first because rank/star tokens
  *     never contain `:`/arrows);
@@ -39,7 +39,7 @@ import java.util.UUID
  * The tab list — not the render-distance [dev.iustitia.tracking.EntityTrackerManager] — is the
  * "other players" set, because lobby chat includes players not in render distance. When a tab-list
  * name is found in the region, it's the username and resolves a real UUID via
- * `getPlayerListEntry(name).profile.id`. The local player is excluded by UUID with a name-match
+ * `getPlayerInfo(name).profile.id`. The local player is excluded by UUID with a name-match
  * fallback.
  *
  * When NO tab-list name is found in the region, the line is dropped by default. With
@@ -59,8 +59,8 @@ object DecoratedChatParser {
     /** Resolved chat row: a clean username, its UUID (real if tab-list, synthetic if permissive fallback), and the message text. */
     data class Parsed(val name: String, val uuid: UUID, val text: String)
 
-    /** Parse a system/game message ([GameMessageS2CPacket.content]) into a chat row, or null. Fail-open. */
-    fun parseGameMessage(text: Text, permissive: Boolean): Parsed? = try {
+    /** Parse a system/game message ([ClientboundSystemChatPacket.content]) into a chat row, or null. Fail-open. */
+    fun parseGameMessage(text: Component, permissive: Boolean): Parsed? = try {
         val s = stripColor(text.string).trim()
         if (s.isEmpty()) return null
         val localName = localName()
@@ -96,11 +96,11 @@ object DecoratedChatParser {
     } catch (_: Throwable) { null }
 
     /**
-     * Parse a profileless chat message ([ProfilelessChatMessageS2CPacket]): the packet already splits
+     * Parse a profileless chat message ([ClientboundDisguisedChatPacket]): the packet already splits
      * the sender display name ([nameText]) from the message body ([messageText]), so only the name →
      * clean-username resolution is needed. Fail-open.
      */
-    fun parseProfileless(nameText: Text, messageText: Text, permissive: Boolean): Parsed? = try {
+    fun parseProfileless(nameText: Component, messageText: Component, permissive: Boolean): Parsed? = try {
         val msg = stripColor(messageText.string).trim()
         if (msg.isEmpty()) return null
         val localName = localName()
@@ -129,7 +129,7 @@ object DecoratedChatParser {
      * name for [uuid]; falls back to [fallback]. Fail-open (returns [fallback]).
      */
     fun resolveCleanName(uuid: UUID, fallback: String): String = try {
-        MinecraftClient.getInstance().networkHandler?.getPlayerListEntry(uuid)?.profile?.name
+        Minecraft.getInstance().connection?.getPlayerInfo(uuid)?.profile?.name
             ?.takeIf { it.isNotBlank() } ?: fallback
     } catch (_: Throwable) { fallback }
 
@@ -199,12 +199,12 @@ object DecoratedChatParser {
     }
 
     private fun tabNames(): List<String> = try {
-        val h = MinecraftClient.getInstance().networkHandler ?: return emptyList()
-        h.playerList.mapNotNull { it.profile?.name }.filter { it.isNotBlank() }
+        val h = Minecraft.getInstance().connection ?: return emptyList()
+        h.onlinePlayers.mapNotNull { it.profile?.name }.filter { it.isNotBlank() }
     } catch (_: Throwable) { emptyList() }
 
     private fun localName(): String? = try {
-        MinecraftClient.getInstance().player?.gameProfile?.name
+        Minecraft.getInstance().player?.gameProfile?.name
     } catch (_: Throwable) { null }
 
     /**
@@ -213,9 +213,9 @@ object DecoratedChatParser {
      * player (by UUID). Returns null when not in the tab list and not permissive (→ drop the row).
      */
     private fun resolveByName(name: String, permissive: Boolean): UUID? {
-        val mc = MinecraftClient.getInstance()
+        val mc = Minecraft.getInstance()
         val local = try { mc.player?.uuid } catch (_: Throwable) { null }
-        val entry = try { mc.networkHandler?.getCaseInsensitivePlayerInfo(name) } catch (_: Throwable) { null }
+        val entry = try { mc.connection?.getPlayerInfoIgnoreCase(name) } catch (_: Throwable) { null }
         val uuid = entry?.profile?.id
         if (uuid != null) {
             if (uuid == local) return null

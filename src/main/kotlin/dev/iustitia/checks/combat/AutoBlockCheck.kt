@@ -22,11 +22,11 @@ import java.util.UUID
  *    swing-in-progress window. Rain tests `isSwingInProgress && isUsingItem` for >10 ticks;
  *    we don't observe `isSwingInProgress` directly, so we rebuild it from [SwingSignal] (a
  *    swing animation lasts ~6 ticks → `tick - lastSwingTick < SWING_TICKS` is "currently
- *    swinging"). Gating on `isBlocking` (UseAction.BLOCK) — NOT bare `usingItem` — excludes
+ *    swinging"). Gating on `isBlocking` (ItemUseAnimation.BLOCK) — NOT bare `usingItem` — excludes
  *    bows (BOW useAction while charging would FP every swing during a bow draw), food (EAT),
  *    and potions (DRINK). Vanilla 1.21 can't attack while a shield is raised, so the BLOCK +
  *    swing overlap is the cheat signature and never a legit action. On 1.8 sword-blocking
- *    (UseAction.BLOCK) is a normal PvP technique — a longer overlap run is required there
+ *    (ItemUseAnimation.BLOCK) is a normal PvP technique — a longer overlap run is required there
  *    ([LEGACY_1_8_BONUS]) so legit block-hitters don't flag.
  *
  * 2. **AutoBlock(SwingUse)** (Grim `MultiActionsE` fold, §8 step 12): a swing while the
@@ -93,7 +93,7 @@ class AutoBlockCheck : Check() {
             // ---- AutoBlock (Rain): block + swing overlap ----
             if (swinging && tp.isBlocking) {
                 ctx.autoBlockTicks++
-                // On 1.8, sword-blocking (UseAction.BLOCK) is a normal PvP technique — a skilled
+                // On 1.8, sword-blocking (ItemUseAnimation.BLOCK) is a normal PvP technique — a skilled
                 // player block-hits (swings while the sword is raised) and sustains overlap far
                 // past the modern threshold. On 1.21 a shield can't be raised while attacking, so
                 // the same overlap is the cheat. Require a much longer run on 1.8 so legit

@@ -1,16 +1,17 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.replay.ReplayState
-import net.minecraft.network.ClientConnection
-import net.minecraft.network.packet.Packet
-import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket
-import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket
-import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket
-import net.minecraft.network.packet.c2s.play.PlayerInputC2SPacket
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket
-import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket
-import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket
-import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket
+import net.minecraft.network.Connection
+import net.minecraft.network.protocol.Packet
+import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket
+import net.minecraft.network.protocol.game.ServerboundAttackPacket
+import net.minecraft.network.protocol.game.ServerboundPunchPacket
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket
+import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket
+import net.minecraft.network.protocol.game.ServerboundInteractPacket
+import net.minecraft.network.protocol.game.ServerboundUseItemPacket
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -32,9 +33,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  * S2C packets (the read-only [ClientPlayNetworkHandlerMixin] handles those), other players, or
  * detection.
  *
- * ## `ClientCommandC2SPacket` — action-targeted suppression
+ * ## `ServerboundPlayerCommandPacket` — action-targeted suppression
  *
- * `ClientCommandC2SPacket` carries a `Mode` enum (yarn 1.21.11: `STOP_SLEEPING`, `START_SPRINTING`,
+ * `ServerboundPlayerCommandPacket` carries an `Action` enum (STOP_SLEEPING, START_SPRINTING,
  * `STOP_SPRINTING`, `START_RIDING_JUMP`, `STOP_RIDING_JUMP`, `OPEN_INVENTORY`, `START_FALL_FLYING`).
  * The gameplay-state actions (sprint toggle, leave-bed, ride-jump, elytra deploy) are suppressed —
  * they mutate the moderator's live server state (sprint flag, sleep state, horse-jump charge, elytra
@@ -53,18 +54,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  *
  * ## Runtime-only-verifiable target
  *
- * `ClientConnection.send` was javap-verified against the 1.21.11 named jar and is overloaded with
+ * `Connection.send` was javap-verified against the 1.21.11 named jar and is overloaded with
  * three variants: `send(Packet)`, `send(Packet, ChannelFutureListener)`, and
  * `send(Packet, ChannelFutureListener, boolean)`. With `defaultRequire: 1` the name-only
  * `method = ["send"]` would be ambiguous and fail at game launch, so the descriptor form
- * `method = ["send(Lnet/minecraft/network/packet/Packet;)V"]` is used to target the single-arg
- * public entry point that all gameplay code calls. The `ClientPlayNetworkHandler.sendPacket` fallback
+ * `method = ["send(Lnet/minecraft/network/protocol/Packet;)V"]` is used to target the single-arg
+ * public entry point that all gameplay code calls. The `ClientPacketListener.sendPacket` fallback
  * was not needed. The build can't confirm mixin-apply; only a live client run can.
  */
-@Mixin(ClientConnection::class)
+@Mixin(Connection::class)
 class ClientConnectionMixin {
 
-    @Inject(method = ["send(Lnet/minecraft/network/packet/Packet;)V"], at = [At("HEAD")], cancellable = true)
+    @Inject(method = ["send(Lnet/minecraft/network/protocol/Packet;)V"], at = [At("HEAD")], cancellable = true)
     private fun iustitia_suppressGameplayPackets(packet: Packet<*>, ci: CallbackInfo) {
         try {
             // Legacy playclip (v1.1.0) skips suppression so the player can act on the live server
@@ -81,21 +82,22 @@ class ClientConnectionMixin {
     /** The closed list of outgoing gameplay packets suppressed during a replay. Anything NOT in this
      *  list (chat, commands, inventory, hotbar, settings, abilities, …) passes through.
      *
-     *  `ClientCommandC2SPacket` is handled specially: only its gameplay-state actions (sprint toggle,
+     *  `ServerboundPlayerCommandPacket` is handled specially: only its gameplay-state actions (sprint toggle,
      *  leave-bed, ride-jump, elytra deploy) are suppressed; `OPEN_INVENTORY` passes through. */
     private fun isGameplay(p: Packet<*>): Boolean {
-        if (p is ClientCommandC2SPacket) {
+        if (p is ServerboundPlayerCommandPacket) {
             // Suppress the gameplay-state actions; let OPEN_INVENTORY through (inventory is
-            // spectator-adjacent, allowed per spec). getMode() is javap-confirmed public on the
-            // 1.21.11 named jar.
-            return p.mode != ClientCommandC2SPacket.Mode.OPEN_INVENTORY
+            // spectator-adjacent, allowed per spec). getAction() is javap-confirmed public on the
+            // 26.3 client jar.
+            return p.action != ServerboundPlayerCommandPacket.Action.OPEN_INVENTORY
         }
-        return p is PlayerMoveC2SPacket ||
-            p is PlayerActionC2SPacket ||
-            p is PlayerInteractBlockC2SPacket ||
-            p is PlayerInteractItemC2SPacket ||
-            p is PlayerInteractEntityC2SPacket ||
-            p is HandSwingC2SPacket ||
-            p is PlayerInputC2SPacket
+        return p is ServerboundMovePlayerPacket ||
+            p is ServerboundPlayerActionPacket ||
+            p is ServerboundUseItemOnPacket ||
+            p is ServerboundUseItemPacket ||
+            p is ServerboundInteractPacket ||
+            p is ServerboundPunchPacket ||
+            p is ServerboundAttackPacket ||
+            p is ServerboundPlayerInputPacket
     }
 }

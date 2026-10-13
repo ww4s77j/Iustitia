@@ -6,10 +6,10 @@ import dev.iustitia.config.ConfigManager
 import dev.iustitia.replay.BlockDeltaBuffer
 import dev.iustitia.replay.ChunkCapture
 import dev.iustitia.replay.RecordManager
-import net.minecraft.block.BlockState
-import net.minecraft.client.MinecraftClient
-import net.minecraft.util.math.BlockPos
-import net.minecraft.world.chunk.WorldChunk
+import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.client.Minecraft
+import net.minecraft.core.BlockPos
+import net.minecraft.world.level.chunk.LevelChunk
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
 /**
  * Block-change observer (read-only) for replay/clip world edits. Ported from SnapClip.
  *
- * `WorldChunk.setBlockState` is the single funnel for every block change this client applies — an
+ * `LevelChunk.setBlockState` is the single funnel for every block change this client applies — an
  * incoming block-update packet from the server, a chunk load, or a local prediction. Injecting at
  * `HEAD` and diffing the old vs new state records `(tick, pos, before, after)` into
  * [BlockDeltaBuffer] (and into an active `/ius record` via [RecordManager.recordDelta]), so a replay
@@ -39,7 +39,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  * when Iustitia actually owns and records replay. The bridge is the line before vanilla's own write:
  * `getBlockState` still returns the pre-change state at `HEAD`.
  */
-@Mixin(WorldChunk::class)
+@Mixin(LevelChunk::class)
 class WorldChunkMixin {
 
     @Inject(method = ["setBlockState"], at = [At("HEAD")])
@@ -49,7 +49,7 @@ class WorldChunkMixin {
         try {
             if (CompanionMods.snapClip) return
             if (!ConfigManager.config.replayCapture) return
-            val world = MinecraftClient.getInstance().world ?: return
+            val world = Minecraft.getInstance().level ?: return
             val tick = Iustitia.tickCounter
             val before = try { ChunkCapture.stateKey(world.getBlockState(pos)) } catch (_: Throwable) { "minecraft:air" }
             val after = try { ChunkCapture.stateKey(state) } catch (_: Throwable) { "minecraft:air" }

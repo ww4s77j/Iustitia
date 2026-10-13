@@ -38,7 +38,7 @@ object FeatureInfo {
         "replay" to
             "/ius replay <player> <seconds> [0.5|0.25] reconstructs an instant replay from the rolling 60s capture buffer: translucent ghost copies of you and every tracked player at their buffered positions, played back at half or quarter speed, with the live world and your own live body hidden (rewind feel). The named player is the highlighted focus ghost. Auto-stops at the end; /ius replay off stops early. Needs the Replay capture buffer on in config.",
         "clip" to
-            "/ius clip <seconds> [name] exports the last N seconds of your own and every tracked player's positions + every alert to a portable .iusclip file under %APPDATA%/.iustitia/clips — an evidence clip you can play back later with /ius playclip, not just a screenshot. [name] tags the focus player into the clip. Always writes (explicit export, independent of the persist-across-sessions toggle).",
+            "/ius clip <seconds> [name] exports the last N seconds of your own and every tracked player's positions + every alert to a portable .iusclip file under .minecraft/.iustitia/clips — an evidence clip you can play back later with /ius playclip, not just a screenshot. [name] tags the focus player into the clip. Always writes (explicit export, independent of the persist-across-sessions toggle).",
         "playclip" to
             "/ius playclip [name] plays a saved .iusclip back in-world as ghost positions at 0.5×, exactly like /ius replay but from a file. Your own recorded body is in the clip and your live one is hidden while it plays. No name = list your saved clips. /ius playclip off stops a playing clip early.",
     )

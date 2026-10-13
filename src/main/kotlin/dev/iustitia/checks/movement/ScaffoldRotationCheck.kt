@@ -11,8 +11,8 @@ import dev.iustitia.math.Vectors
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
-import net.minecraft.item.BlockItem
+import net.minecraft.client.Minecraft
+import net.minecraft.world.item.BlockItem
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -133,7 +133,7 @@ class ScaffoldRotationCheck : Check() {
         // chunk borders, per the chunk-unloaded-never-FP rule. isSolidBelow returns false on
         // unloaded chunks, so without this guard a missing-in-unloaded-chunk floor would
         // false-flag a godbridge over the edge of loaded terrain.
-        val world = MinecraftClient.getInstance().world
+        val world = Minecraft.getInstance().level
         val bx = Math.floor(tp.pos.x).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
         if (world == null || !WorldQueries.isChunkLoaded(world, bx, bz)) { ctx.streak = 0; return }
@@ -170,8 +170,8 @@ class ScaffoldRotationCheck : Check() {
         // (pickaxe/eat main). Rain's getHeldItem() predates the off-hand slot, so the port
         // must also accept an off-hand BlockItem — otherwise off-hand bridgers fully bypass
         // the path. Both reads independently try/catch-wrapped to preserve fail-open granularity.
-        val mainBlock = try { tp.entity?.mainHandStack?.item is BlockItem } catch (_: Throwable) { false }
-        val offBlock = try { tp.entity?.offHandStack?.item is BlockItem } catch (_: Throwable) { false }
+        val mainBlock = try { tp.entity?.mainHandItem?.item is BlockItem } catch (_: Throwable) { false }
+        val offBlock = try { tp.entity?.offhandItem?.item is BlockItem } catch (_: Throwable) { false }
         if (!mainBlock && !offBlock) return
 
         val end = ctx.lastCrouchEnd

@@ -3,8 +3,8 @@ package dev.iustitia.render
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
-import net.minecraft.client.MinecraftClient
-import net.minecraft.particle.DustParticleEffect
+import net.minecraft.client.Minecraft
+import net.minecraft.core.particles.DustParticleOptions
 import java.util.UUID
 
 /**
@@ -12,21 +12,21 @@ import java.util.UUID
  * particle burst at the offender's eye — a visual "flag" cue mid-fight, complementary to the
  * nametag burst-pulse and the audio cue.
  *
- * **Local-only:** uses `World.addParticleClient` (a client-only particle spawn — no packet is sent
+ * **Local-only:** uses `Level.addParticleClient` (a client-only particle spawn — no packet is sent
  * to the server; the particles exist only in the local client's particle manager). Fail-open: any
  * error is swallowed so alerting/spark rendering never crashes the tick or render path.
  *
  * ## Threading
  *
  * [fire] is called from [dev.iustitia.alert.AlertManager.alert] on the netty packet thread. We
- * hand the actual particle spawn to [MinecraftClient.execute] so it runs on the client thread
+ * hand the actual particle spawn to [Minecraft.execute] so it runs on the client thread
  * (particles must be added from the client/tick thread), reading the offender's current position
  * there so it reflects the latest interpolation.
  *
  * ## Color
  *
- * `DustParticleEffect(int color, float scale)` packs RGB in the int (red `0xFF3030`, yellow
- * `0xFFFF30`); spawned via `addParticleClient(dust, x, y, z, vx, vy, vz)` with a small random
+ * `DustParticleOptions(int color, float scale)` packs RGB in the int (red `0xFF3030`, yellow
+ * `0xFFFF30`); spawned via `addParticle(dust, x, y, z, vx, vy, vz)` with a small random
  * velocity cone so the burst reads as an outward spray rather than a static clump.
  *
  * Runtime-only-verifiable: a build cannot confirm the particles render at the offender (depends on
@@ -50,16 +50,16 @@ object BurstSparks {
             if (!ConfigManager.config.burstSparks) return
             if (tier == FlagHistory.Tier.GREEN) return
             val color = if (tier == FlagHistory.Tier.RED) RED_RGB else YELLOW_RGB
-            val client = MinecraftClient.getInstance()
+            val client = Minecraft.getInstance()
             client.execute {
                 try {
-                    val world = client.world ?: return@execute
-                    val offender = world.getPlayerByUuid(uuid) ?: return@execute
+                    val world = client.level ?: return@execute
+                    val offender = world.getPlayerByUUID(uuid) ?: return@execute
                     if (offender.isRemoved) return@execute
                     // Eye position via tickDelta 0 (this fires on the tick boundary; close enough for
                     // a particle origin — the spray is coarse by design).
-                    val eye = offender.getCameraPosVec(0f)
-                    val dust = DustParticleEffect(color, SCALE)
+                    val eye = offender.getEyePosition(0f)
+                    val dust = DustParticleOptions(color, SCALE)
                     // Deterministic pseudo-random spread from the player uuid + current tick so the
                     // burst looks natural but stays off Math.random (unavailable in some contexts).
                     val seed = (uuid.leastSignificantBits xor Iustitia.tickCounter.toLong())
@@ -67,7 +67,7 @@ object BurstSparks {
                         val r = spread(seed, i, 0)
                         val r2 = spread(seed, i, 1)
                         val r3 = spread(seed, i, 2)
-                        world.addParticleClient(
+                        world.addParticle(
                             dust,
                             eye.x, eye.y, eye.z,
                             (r - 0.5) * SPEED, (r2 - 0.5) * SPEED, (r3 - 0.5) * SPEED,

@@ -6,7 +6,7 @@ import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import java.util.UUID
 import kotlin.math.hypot
 import dev.iustitia.checks.LagWindows
@@ -49,7 +49,7 @@ class LongJumpCheck : Check() {
                 tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val ctx = contextOf(tp.uuid) as LongJumpContext
-            // a real jump impulse starts the air phase. Arm on the 2nd airborne tick of ANY
+            // a real jump impulse starts the air phase. HumanoidArm on the 2nd airborne tick of ANY
             // jump arc — the prior `abs(prevDeltaY - 0.42) < 0.08` armed only a vanilla 0.42
             // jump, so a Jump Boost jump (impulse 0.52/0.62/…) never armed and LongJump was
             // dead for anyone under Jump Boost. Generalize: prevDeltaY is a plausible jump
@@ -65,7 +65,7 @@ class LongJumpCheck : Check() {
                 // single-tick check can't afford to strict-flag on an unloaded chunk, per the
                 // chunk-unloaded-never-FP rule. The grounded reset below still runs.
                 var eff = cfg.threshold * SpeedMath.speedFactor(tp.speedAmplifier)
-                val world = MinecraftClient.getInstance().world
+                val world = Minecraft.getInstance().level
                 if (world != null) {
                     val state = WorldQueries.blockStateAt(
                         world,

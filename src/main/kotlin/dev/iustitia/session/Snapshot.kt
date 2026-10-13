@@ -6,17 +6,17 @@ import com.google.gson.JsonObject
 import dev.iustitia.Iustitia
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.persistence.PersistenceManager
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.gl.Framebuffer
-import net.minecraft.client.util.ScreenshotRecorder
-import net.minecraft.text.Text
+import net.minecraft.client.Minecraft
+import com.mojang.blaze3d.pipeline.RenderTarget
+import net.minecraft.client.Screenshot
+import net.minecraft.network.chat.Component
 import java.util.UUID
 import java.util.function.Consumer
 
 /**
  * The one-click evidence snapshot (Phase 2 #3, non-render half): posts a one-line summary to chat,
  * copies it to the clipboard, and — when persistence is on — writes a small `.json` to
- * `%APPDATA%/.iustitia/snapshots/`. The screenshot + target-highlight overlay is a deferred Phase B
+ * `.minecraft/.iustitia/snapshots/`. The screenshot + target-highlight overlay is a deferred Phase B
  * render piece. Fail-open, local-only (clipboard + chat are client-side; nothing is sent upstream).
  */
 object Snapshot {
@@ -81,7 +81,7 @@ object Snapshot {
     fun capture(uuid: UUID, name: String): String {
         val summary = buildSummary(uuid, name)
         try {
-            val client = MinecraftClient.getInstance()
+            val client = Minecraft.getInstance()
             // Honest save result: the json file is the only part that can silently fail —
             // report it instead of letting "posted + copied to clipboard" imply everything landed.
             var fileFailed = false
@@ -90,9 +90,9 @@ object Snapshot {
             }
             client.execute {
                 try {
-                    client.inGameHud?.chatHud?.addMessage(Text.literal(summary))
-                    try { client.keyboard.setClipboard(summary) } catch (_: Throwable) {}
-                    if (fileFailed) client.inGameHud?.chatHud?.addMessage(Text.literal(
+                    client.gui.hud.chat.addClientSystemMessage(Component.literal(summary))
+                    try { client.keyboardHandler.setClipboard(summary) } catch (_: Throwable) {}
+                    if (fileFailed) client.gui.hud.chat.addClientSystemMessage(Component.literal(
                         "§8[§diustitia§8] §csnapshot file could not be written (disk error) — chat + clipboard still have the summary."))
                 } catch (_: Throwable) {}
             }
@@ -103,7 +103,7 @@ object Snapshot {
 
     /**
      * Capture a screenshot to `snapshots/<tick>_<name>.png` (the Phase B render half of the
-     * evidence snapshot). The `int` arg to [ScreenshotRecorder] is the resolution multiplier
+     * evidence snapshot). The `int` arg to [Screenshot] is the resolution multiplier
      * (1 = full-res, matching vanilla F2). Vanilla uses the filename verbatim (no auto-extension)
      * when it's non-null, so the `.png` MUST be included or Windows won't treat it as an image.
      *
@@ -114,7 +114,7 @@ object Snapshot {
      * the next frame by [dev.iustitia.render.SelfieRenderer]. With no target it falls back to an
      * immediate local-POV capture (vanilla F2 angle) on the render thread.
      *
-     * The save's [Consumer] callback receives the "saved <file>" / error [Text]; we echo it to chat
+     * The save's [Consumer] callback receives the "saved <file>" / error [Component]; we echo it to chat
      * so the user gets a clickable file link. Fail-open: any GL/IO/camera failure is swallowed —
      * the chat, clipboard, and `.json` summary from [capture] still land. A build cannot verify the
      * framebuffer/camera behavior (GL-state-dependent); runtime-test only. No-op when persistence
@@ -122,7 +122,7 @@ object Snapshot {
      */
     fun captureScreenshot(name: String, offenderUuid: UUID? = null) {
         try {
-            val client = MinecraftClient.getInstance()
+            val client = Minecraft.getInstance()
             val dir = PersistenceManager.screenshotsDirFile() ?: return
             val tick = Iustitia.tickCounter
             val safe = name.replace(Regex("[^A-Za-z0-9_.-]"), "_")
@@ -137,13 +137,13 @@ object Snapshot {
                 return
             }
             // No target → immediate local-POV capture (vanilla F2 angle) on the render thread.
-            val fb: Framebuffer? = client.framebuffer
+            val fb: RenderTarget? = client.gameRenderer.mainRenderTarget()
             if (fb == null) return
             client.execute {
                 try {
-                    ScreenshotRecorder.saveScreenshot(
+                    Screenshot.grab(
                         dir, filename, fb, 1,
-                        Consumer { msg -> try { client.inGameHud?.chatHud?.addMessage(msg) } catch (_: Throwable) {} }
+                        Consumer { msg -> try { client.gui.hud.chat.addClientSystemMessage(msg) } catch (_: Throwable) {} }
                     )
                 } catch (_: Throwable) {}
             }

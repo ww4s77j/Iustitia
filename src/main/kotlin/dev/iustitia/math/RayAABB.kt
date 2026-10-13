@@ -1,6 +1,6 @@
 package dev.iustitia.math
 
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.phys.Vec3
 import kotlin.math.abs
 
 /**
@@ -12,7 +12,7 @@ import kotlin.math.abs
 object RayAABB {
     private const val EPS = 1.0E-7
 
-    fun calculateIntercept(box: AABB, origin: Vec3d, end: Vec3d): Vec3d? {
+    fun calculateIntercept(box: AABB, origin: Vec3, end: Vec3): Vec3? {
         val ox = origin.x
         val oy = origin.y
         val oz = origin.z
@@ -72,6 +72,6 @@ object RayAABB {
         // tmin ≥ 0 ⇒ t = tmin (entry point), unchanged.
         val t = if (tmin >= 0.0) tmin else 0.0
         if (t < 0.0) return null
-        return Vec3d(ox + dx * t, oy + dy * t, oz + dz * t)
+        return Vec3(ox + dx * t, oy + dy * t, oz + dz * t)
     }
 }

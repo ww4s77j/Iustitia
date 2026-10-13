@@ -1,7 +1,7 @@
 package dev.iustitia.checks
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.world.GameMode
+import net.minecraft.client.Minecraft
+import net.minecraft.world.level.GameType
 import java.util.UUID
 
 /**
@@ -36,7 +36,7 @@ import java.util.UUID
  * an advantage (they can already fly anywhere), and combat stays watched. Servers that
  * run creative PvP testing flip the `creativeFlightExempt` toggle off.
  *
- * Game mode comes from the server-sent tab list ([net.minecraft.client.network.PlayerListEntry]).
+ * Game mode comes from the server-sent tab list ([net.minecraft.client.multiplayer.PlayerInfo]).
  * Fail-open everywhere: no network handler / no tab entry / unknown mode → not exempt →
  * checks run as before. A minigame server that spoofs or hides game modes can therefore
  * under-exempt (creative still flags — the pre-fix behavior) or over-exempt (a survival
@@ -60,8 +60,8 @@ object CreativeFlight {
     val SPECTATOR_EXTRA_IDS: Set<String> = setOf("phaseClip")
 
     /** Server-sent tab-list game mode, or null when unknown (fail-open to checking). */
-    fun gameModeOf(uuid: UUID): GameMode? = try {
-        MinecraftClient.getInstance().networkHandler?.getPlayerListEntry(uuid)?.gameMode
+    fun gameModeOf(uuid: UUID): GameType? = try {
+        Minecraft.getInstance().connection?.getPlayerInfo(uuid)?.gameMode
     } catch (_: Throwable) {
         null
     }
@@ -69,8 +69,8 @@ object CreativeFlight {
     /** Narrow gate for [Check.flag]: true only for an exempt (mode, check) pair. */
     fun isExempt(checkId: String, uuid: UUID): Boolean = try {
         when (gameModeOf(uuid)) {
-            GameMode.CREATIVE -> checkId in FLIGHT_EXEMPT_IDS
-            GameMode.SPECTATOR -> checkId in FLIGHT_EXEMPT_IDS || checkId in SPECTATOR_EXTRA_IDS
+            GameType.CREATIVE -> checkId in FLIGHT_EXEMPT_IDS
+            GameType.SPECTATOR -> checkId in FLIGHT_EXEMPT_IDS || checkId in SPECTATOR_EXTRA_IDS
             else -> false
         }
     } catch (_: Throwable) {

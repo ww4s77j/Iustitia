@@ -8,7 +8,7 @@ import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import java.util.UUID
 import dev.iustitia.checks.LagWindows
 
@@ -26,7 +26,7 @@ import dev.iustitia.checks.LagWindows
  *    while sneaking — both metadata flags set simultaneously is a cheat. Both fields are
  *    polled directly on [TrackedPlayer], trivial.
  * 3. **Sprint(Blind)** (Grim `SprintD`): sprinting while Blind. Vanilla blocks sprint under
- *    Blindness. Blindness on other players IS broadcast (EntityStatusEffectS2CPacket) — the
+ *    Blindness. Blindness on other players IS broadcast (ClientboundUpdateMobEffectPacket) — the
  *    mixin forwards it via [EffectSignal] (extended in this step to carry `isBlind`). This
  *    check subscribes [EffectSignal] and tracks `blind` per-player in its context (no
  *    TrackedPlayer field; the Speed-specific `markEffect` is untouched).
@@ -99,7 +99,7 @@ class SprintHackCheck : Check() {
 
     /** Sprint(Water): feet block is liquid, head (eye-height) block is NOT liquid, not swimming. */
     private fun waterSprint(tp: TrackedPlayer, tick: Int): Boolean {
-        val world = MinecraftClient.getInstance().world ?: return false
+        val world = Minecraft.getInstance().level ?: return false
         val bx = Math.floor(tp.pos.x).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
         val footY = Math.floor(tp.pos.y).toInt()

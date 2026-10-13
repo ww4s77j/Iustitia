@@ -1,9 +1,9 @@
 package dev.iustitia.replay
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.registry.Registries
-import net.minecraft.util.math.BlockPos
-import net.minecraft.world.chunk.ChunkStatus
+import net.minecraft.client.Minecraft
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.core.BlockPos
+import net.minecraft.world.level.chunk.status.ChunkStatus
 
 /**
  * Captures a bounded cube of the loaded terrain around a clip's action and returns a
@@ -31,7 +31,7 @@ import net.minecraft.world.chunk.ChunkStatus
  *
  * Read-only, fail-open throughout: any error returns null (clip saves with no terrain; playback
  * then shows ghosts relocated but no map — the user can re-record). No outgoing packets, no world
- * edits — this only reads [net.minecraft.client.world.ClientWorld.getBlockState].
+ * edits — this only reads [net.minecraft.client.multiplayer.ClientLevel.getBlockState].
  */
 object TerrainCapture {
 
@@ -55,7 +55,7 @@ object TerrainCapture {
      * bbox / no loaded world, in which case the clip saves without terrain.
      */
     fun capture(window: ReplayBuffer.Window, focus: java.util.UUID?): TerrainSnapshot? = try {
-        val world = MinecraftClient.getInstance().world ?: return null
+        val world = Minecraft.getInstance().level ?: return null
         if (window.frames.isEmpty()) return null
 
         // --- 1. player-position bbox across the whole window ---
@@ -102,14 +102,14 @@ object TerrainCapture {
         }
 
         // --- 4. precompute a per-chunk loaded cache over the bbox chunk range, so the block walk does
-        //        one cheap lookup per block instead of a chunk-manager call (which is a hash lookup +
+        //        one cheap lookup per block instead of a chunk-source call (which is a hash lookup +
         //        a ChunkStatus check) per block. Unloaded chunks → all-air (fail-open). ---
         val minCX = loX shr 4; val maxCX = hiX shr 4
         val minCZ = loZ shr 4; val maxCZ = hiZ shr 4
         val loaded = BooleanArray((maxCX - minCX + 1) * (maxCZ - minCZ + 1))
         for (cx in minCX..maxCX) for (cz in minCZ..maxCZ) {
             loaded[(cx - minCX) * (maxCZ - minCZ + 1) + (cz - minCZ)] = try {
-                world.chunkManager.getChunk(cx, cz, ChunkStatus.FULL, false) != null
+                world.chunkSource.getChunk(cx, cz, ChunkStatus.FULL, false) != null
             } catch (_: Throwable) { false }
         }
 
@@ -124,7 +124,7 @@ object TerrainCapture {
                     val chunkOK = loaded[((x shr 4) - minCX) * (maxCZ - minCZ + 1) + czOff]
                     val name: String? = if (!chunkOK) null else try {
                         val state = world.getBlockState(BlockPos(x, y, z))
-                        if (state.isAir) null else Registries.BLOCK.getId(state.block).toString()
+                        if (state.isAir) null else BuiltInRegistries.BLOCK.getId(state.block).toString()
                     } catch (_: Throwable) { null }
                     // coalesce: same identity extends the current run; a change flushes the old + starts new
                     if (name == lastName) {

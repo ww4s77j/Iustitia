@@ -1,9 +1,9 @@
 package dev.iustitia.render
 
 import dev.iustitia.i18n.L10n
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.option.Perspective
-import net.minecraft.util.math.Vec3d
+import net.minecraft.client.Minecraft
+import net.minecraft.client.CameraType
+import net.minecraft.world.phys.Vec3
 import java.util.UUID
 
 /**
@@ -63,8 +63,8 @@ object WatchState {
 
     // Client-thread-only state (written by enable/disable/tickSafety, all on the client thread).
     private var savedHudHidden: Boolean = false
-    private var savedPerspective: Perspective? = null
-    private var startPos: Vec3d? = null
+    private var savedPerspective: CameraType? = null
+    private var startPos: Vec3? = null
     private var lastHurtTime: Int = 0
 
     /** Begin watching [uuid]. Client thread only (called from the keybind). */
@@ -74,17 +74,17 @@ object WatchState {
         // overrides fighting each frame). Callers should have checked too; this is the backstop.
         if (dev.iustitia.compat.CompanionMods.followCam) return
         try {
-            val mc = MinecraftClient.getInstance()
+            val mc = Minecraft.getInstance()
             val p = mc.player
             // Save + force the HUD/perspective state: F1 (hide HUD) + third-person back so the
             // local player's own model renders in the scene (first-person suppresses your body).
-            savedHudHidden = mc.options.hudHidden
-            savedPerspective = mc.options.perspective
-            mc.options.hudHidden = true
-            if (mc.options.perspective != Perspective.THIRD_PERSON_BACK) {
-                mc.options.setPerspective(Perspective.THIRD_PERSON_BACK)
+            savedHudHidden = mc.gui.hud.isHidden()
+            savedPerspective = mc.options.cameraType
+            if (!mc.gui.hud.isHidden()) mc.gui.hud.toggle()
+            if (mc.options.cameraType != CameraType.THIRD_PERSON_BACK) {
+                mc.options.setCameraType(CameraType.THIRD_PERSON_BACK)
             }
-            startPos = p?.getCameraPosVec(0f)
+            startPos = p?.getEyePosition(0f)
             lastHurtTime = p?.hurtTime ?: 0
             targetUuid = uuid
             pendingExitReason = null
@@ -133,19 +133,19 @@ object WatchState {
             }
             if (!active) return null
 
-            val mc = MinecraftClient.getInstance()
+            val mc = Minecraft.getInstance()
             val p = mc.player ?: return null
 
             // Ignore change-perspective (F5) during watch: re-clamp to third-person back so the
             // local player's own model keeps rendering.
-            if (mc.options.perspective != Perspective.THIRD_PERSON_BACK) {
-                mc.options.setPerspective(Perspective.THIRD_PERSON_BACK)
+            if (mc.options.cameraType != CameraType.THIRD_PERSON_BACK) {
+                mc.options.setCameraType(CameraType.THIRD_PERSON_BACK)
             }
 
             // Movement auto-exit: too far from the start position → stop watching.
             val start = startPos
             if (start != null) {
-                val cur = p.getCameraPosVec(0f)
+                val cur = p.getEyePosition(0f)
                 val dx = cur.x - start.x
                 val dy = cur.y - start.y
                 val dz = cur.z - start.z
@@ -173,9 +173,9 @@ object WatchState {
 
     /** Restore the saved HUD-hidden + perspective state and clear the per-watch bookkeeping. */
     private fun restore() {
-        val mc = MinecraftClient.getInstance()
-        mc.options.hudHidden = savedHudHidden
-        savedPerspective?.let { mc.options.setPerspective(it) }
+        val mc = Minecraft.getInstance()
+        if (mc.gui.hud.isHidden() != savedHudHidden) mc.gui.hud.toggle()
+        savedPerspective?.let { mc.options.setCameraType(it) }
         savedPerspective = null
         savedHudHidden = false
         targetUuid = null

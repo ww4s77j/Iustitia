@@ -4,14 +4,14 @@ import dev.iustitia.VerboseLog
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.tracking.EntityTrackerManager
-import net.minecraft.client.network.OtherClientPlayerEntity
-import net.minecraft.client.render.command.OrderedRenderCommandQueue
-import net.minecraft.client.render.entity.PlayerEntityRenderer
-import net.minecraft.client.render.entity.state.PlayerEntityRenderState
-import net.minecraft.client.render.state.CameraRenderState
-import net.minecraft.client.util.math.MatrixStack
-import net.minecraft.entity.PlayerLikeEntity
-import net.minecraft.text.Text
+import net.minecraft.client.player.RemotePlayer
+import net.minecraft.client.renderer.SubmitNodeCollector
+import net.minecraft.client.renderer.entity.player.AvatarRenderer
+import net.minecraft.client.renderer.entity.state.AvatarRenderState
+import net.minecraft.client.renderer.state.level.CameraRenderState
+import com.mojang.blaze3d.vertex.PoseStack
+import net.minecraft.world.entity.Avatar
+import net.minecraft.network.chat.Component
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -27,7 +27,7 @@ import java.util.IdentityHashMap
  *
  * This is the second client mixin (the first, [ClientPlayNetworkHandlerMixin], is the read-only
  * packet observer). It is read-only on the render path: it rewrites the label *text* held in
- * `PlayerEntityRenderState.displayName` (the main nametag, inherited from `EntityRenderState`).
+ * `AvatarRenderState.displayName` (the main nametag, inherited from `EntityRenderState`).
  * It does NOT touch `hasLabel`/visibility, so vanilla nametag visibility is respected (the prefix
  * only appears when vanilla would show the nametag — hidden while sneaking-behind-walls / out of
  * range; no wallhack). It never touches the camera or any outgoing packet. Whole body fail-open so
@@ -39,7 +39,7 @@ import java.util.IdentityHashMap
  * `updateRenderState` TAIL. `renderLabelIfPresent` reads `state.displayName` (offset 91 in the
  * bytecode) and submits it via `submitLabel` *after* our HEAD inject, so writing the prefix at HEAD
  * guarantees the field holds our prefix at the exact moment of draw — robust against any
- * intermediate reset/batch cache. (Verified by decompiling `PlayerEntityRenderer.renderLabelIfPresent`
+ * intermediate reset/batch cache. (Verified by decompiling `AvatarRenderer.renderLabelIfPresent`
  * on yarn 1.21.11: it draws two labels — `playerName` offset 20, `displayName` offset 91 — both read
  * straight off `state` via `getfield`, so a HEAD inject that mutates `displayName` is seen by the
  * draw.)
@@ -64,11 +64,11 @@ import java.util.IdentityHashMap
  *
  * ## Tier lookup at draw time
  *
- * `renderLabelIfPresent` receives only `state` (no entity/uuid), and `PlayerEntityRenderState`
+ * `renderLabelIfPresent` receives only `state` (no entity/uuid), and `AvatarRenderState`
  * carries no uuid — so we can't look up the tier there. We record a `state → Tier` mapping in
  * `updateRenderState` (which DOES get the entity) and read it back in `renderLabelIfPresent`.
  *
- * **State lifetime / leak avoidance:** `PlayerEntityRenderState` is NOT a single reused instance —
+ * **State lifetime / leak avoidance:** `AvatarRenderState` is NOT a single reused instance —
  * a fresh state is created per render cycle (confirmed during diagnosis: the per-state DRAW log
  * fired dozens of times for one player). So a plain `IdentityHashMap` would leak one entry per
  * render call. We bound it with **remove-on-read** in `renderLabelIfPresent` (each recorded entry
@@ -86,23 +86,23 @@ import java.util.IdentityHashMap
  *
  * ## Local-player exclusion
  *
- * `ClientPlayerEntity` and `OtherClientPlayerEntity` are SIBLINGS in yarn 1.21.11 (both extend
+ * `LocalPlayer` and `RemotePlayer` are SIBLINGS in yarn 1.21.11 (both extend
  * `AbstractClientPlayerEntity`, verified with javap against the mapped jar), so the
- * `entity as? OtherClientPlayerEntity` check already excludes the local player: the cast is null for
+ * `entity as? RemotePlayer` check already excludes the local player: the cast is null for
  * yourself. That is what keeps F5 third-person from showing your own prefix, which means the null case
- * below IS the self case. (An earlier revision of this comment claimed `ClientPlayerEntity` IS-A
- * `OtherClientPlayerEntity` and added a uuid check on top of the cast; the cast was already doing the
+ * below IS the self case. (An earlier revision of this comment claimed `LocalPlayer` IS-A
+ * `RemotePlayer` and added a uuid check on top of the cast; the cast was already doing the
  * work, and [dev.iustitia.mixin.EntityRendererMixin] was less lucky with the same wrong premise there.)
  *
  * Target verified against yarn 1.21.11 mappings. `updateRenderState` = method_62604; the
- * `renderLabelIfPresent` override on `PlayerEntityRenderer` is `(PlayerEntityRenderState,
- * MatrixStack, OrderedRenderCommandQueue, CameraRenderState)V` (disambiguated from the base
+ * `renderLabelIfPresent` override on `AvatarRenderer` is `(AvatarRenderState,
+ * PoseStack, SubmitNodeCollector, CameraRenderState)V` (disambiguated from the base
  * `EntityRenderer.renderLabelIfPresent(EntityRenderState, …)` overload by the handler's first
  * param type — the same mechanism that lets the `updateRenderState` inject target one of its 3
  * overloads). `displayName` = `field_53337`, declared on `EntityRenderState` (accessor targets that
  * class — see [EntityRenderStateAccessor] and the GOTCHA recorded in the nametag memory note).
  */
-@Mixin(PlayerEntityRenderer::class)
+@Mixin(AvatarRenderer::class)
 class PlayerEntityRendererMixin {
 
     /**
@@ -112,7 +112,7 @@ class PlayerEntityRendererMixin {
      */
     private data class TierEntry(val tier: FlagHistory.Tier, val uuid: java.util.UUID)
 
-    private val stateTier: IdentityHashMap<PlayerEntityRenderState, TierEntry> = IdentityHashMap()
+    private val stateTier: IdentityHashMap<AvatarRenderState, TierEntry> = IdentityHashMap()
 
     /**
      * Players for which we've already emitted the "fell back to BELOW_NAME score line" verbose
@@ -127,10 +127,10 @@ class PlayerEntityRendererMixin {
     private val loggedProbe =
         java.util.Collections.synchronizedSet(java.util.LinkedHashSet<java.util.UUID>())
 
-    @Inject(method = ["updateRenderState"], at = [At("TAIL")])
+    @Inject(method = ["extractRenderState"], at = [At("TAIL")])
     private fun iustitia_recordTier(
-        entity: PlayerLikeEntity,
-        state: PlayerEntityRenderState,
+        entity: Avatar,
+        state: AvatarRenderState,
         tickProgress: Float,
         ci: CallbackInfo,
     ) {
@@ -140,8 +140,8 @@ class PlayerEntityRendererMixin {
             if (stateTier.size > CAP) stateTier.clear()
 
             // `null` means "not one of the other players", which covers the local player (the client
-            // player is not an OtherClientPlayerEntity; see the class doc), so self never gets a prefix.
-            val other = entity as? OtherClientPlayerEntity
+            // player is not an RemotePlayer; see the class doc), so self never gets a prefix.
+            val other = entity as? RemotePlayer
             if (other == null) {
                 stateTier.remove(state)
             } else {
@@ -152,11 +152,11 @@ class PlayerEntityRendererMixin {
         } catch (_: Throwable) {}
     }
 
-    @Inject(method = ["renderLabelIfPresent"], at = [At("HEAD")])
+    @Inject(method = ["submitNameDisplay"], at = [At("HEAD")])
     private fun iustitia_prefixNametagAtDraw(
-        state: PlayerEntityRenderState,
-        matrices: MatrixStack,
-        queue: OrderedRenderCommandQueue,
+        state: AvatarRenderState,
+        matrices: PoseStack,
+        queue: SubmitNodeCollector,
         camera: CameraRenderState,
         ci: CallbackInfo,
     ) {
@@ -189,7 +189,7 @@ class PlayerEntityRendererMixin {
             // white variant). The numeric confidence score is NOT shown on the nametag — only the
             // glyph. (The score is still available in `/ius hist`, `/ius session`, the snapshot, and
             // the crosshair confidence HUD.)
-            val prefix = Text.literal("§${glyphColor}[$glyph]§r ")
+            val prefix = Component.literal("§${glyphColor}[$glyph]§r ")
 
             val dnAcc = state as? EntityRenderStateAccessor ?: return
             val displayName = dnAcc.iustitia_getDisplayName()
@@ -198,7 +198,7 @@ class PlayerEntityRendererMixin {
                 // untouched. Double-prefix guard: skip if already prefixed this frame (multi-pass).
                 // Color-agnostic so the burst-pulse §f variant (and the §7 badge) still match.
                 if (alreadyPrefixed(displayName.string)) return
-                dnAcc.iustitia_setDisplayName(Text.empty().append(prefix).append(displayName))
+                dnAcc.iustitia_setDisplayName(Component.empty().append(prefix).append(displayName))
             } else {
                 // FALLBACK: the server hid the vanilla name (displayName null via team
                 // nametagVisibility). WHEN renderLabelIfPresent is being called, the only label the
@@ -219,7 +219,7 @@ class PlayerEntityRendererMixin {
                 if (tier == FlagHistory.Tier.GREEN) return
                 if (pnAcc == null || score == null) return   // no BELOW_NAME objective → nothing to prefix
                 if (alreadyPrefixed(score.string)) return
-                pnAcc.iustitia_setPlayerName(Text.empty().append(prefix).append(score))
+                pnAcc.iustitia_setPlayerName(Component.empty().append(prefix).append(score))
                 logFallbackOnce(entry.uuid, tier)
             }
         } catch (_: Throwable) {}

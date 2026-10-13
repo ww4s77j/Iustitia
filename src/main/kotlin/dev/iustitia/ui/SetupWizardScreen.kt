@@ -2,10 +2,10 @@ package dev.iustitia.ui
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.config.PresetManager
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.Click
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.text.Text
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.network.chat.Component
 
 /**
  * #13 (first-launch wizard): a one-shot manual-render screen shown when `wizardCompleted` is false
@@ -22,7 +22,7 @@ import net.minecraft.text.Text
  * The one thing the wizard adds on top of a preset is persistence. `persistenceEnabled` is on
  * `ConfigManager.PRESET_EXCLUDED_KEYS` as per-user state, so no preset is allowed to write it, and
  * a wizard button has to layer it itself (moderation on, everyone else off). Moderation is the staff
- * profile and staff notes are worth keeping across restarts; for a player the roaming store is not
+ * profile and staff notes are worth keeping across restarts; for a player the persistent store is not
  * something to switch on without being asked.
  *
  * `debug` has no button. It turns everything on and drops both suppression timers, which is not
@@ -60,7 +60,7 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
         emptyList()
     }
 
-    override fun shouldPause(): Boolean = true
+    override fun isPauseScreen(): Boolean = true
 
     override fun init() { try {} catch (_: Throwable) {} }
 
@@ -70,7 +70,8 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             ConfigManager.save()
             try { dev.iustitia.Iustitia.onConfigReloaded() } catch (_: Throwable) {}
         } catch (_: Throwable) {}
-        client?.setScreen(parent)
+        val p = parent
+        if (p != null) minecraft.setScreenAndShow(p) else minecraft.gui.setScreen(null)
     }
 
     /** How many blurb lines a button has room for on this window. GUI scale 4 on a 1080p display
@@ -83,7 +84,7 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
     }
 
     /** Where everything goes. Character counts stand in for font metrics so this needs no
-     *  [DrawContext] and both callers can share it. The block is centered vertically, and clamps to
+     *  [GuiGraphicsExtractor] and both callers can share it. The block is centered vertically, and clamps to
      *  8px from the top rather than going negative on a window too short for it. */
     private fun layout(): Layout {
         val budget = blurbBudget()
@@ -102,37 +103,37 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
         return Layout(headerY, rows, Box(x, y, BOX_W, SKIP_H, emptyList()))
     }
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+    override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
         try {
             context.fill(0, 0, this.width, this.height, BG)
-            super.render(context, mouseX, mouseY, delta)
-            val tr = this.textRenderer
+            super.extractRenderState(context, mouseX, mouseY, delta)
+            val tr = this.font
             val cx = this.width / 2
             val l = layout()
             for ((i, line) in HEADER.withIndex()) {
-                context.drawTextWithShadow(tr, Text.literal(line), cx - tr.getWidth(line) / 2, l.headerY + i * LINE_H, WHITE)
+                context.text(tr, Component.literal(line), cx - tr.width(line) / 2, l.headerY + i * LINE_H, WHITE)
             }
             for ((i, box) in l.rows.withIndex()) {
                 drawBox(context, box, mouseX, mouseY)
-                context.drawTextWithShadow(tr, Text.literal(presets[i].label), box.x + 8, box.y + 6, WHITE)
+                context.text(tr, Component.literal(presets[i].label), box.x + 8, box.y + 6, WHITE)
                 for ((j, line) in box.lines.withIndex()) {
-                    context.drawTextWithShadow(tr, Text.literal("§7$line"), box.x + 8, box.y + 16 + j * LINE_H, WHITE)
+                    context.text(tr, Component.literal("§7$line"), box.x + 8, box.y + 16 + j * LINE_H, WHITE)
                 }
             }
             val s = l.skip
             drawBox(context, s, mouseX, mouseY)
-            context.drawTextWithShadow(tr, Text.literal(SKIP_LABEL), s.x + 8, s.y + 6, WHITE)
+            context.text(tr, Component.literal(SKIP_LABEL), s.x + 8, s.y + 6, WHITE)
         } catch (_: Throwable) {}
     }
 
-    private fun drawBox(context: DrawContext, box: Box, mouseX: Int, mouseY: Int) {
+    private fun drawBox(context: GuiGraphicsExtractor, box: Box, mouseX: Int, mouseY: Int) {
         if (mouseX in box.x..(box.x + box.w) && mouseY in box.y..(box.y + box.h)) {
             context.fill(box.x, box.y, box.x + box.w, box.y + box.h, 0x40FFFFFF)
         }
         border(context, box.x, box.y, box.w, box.h, 0xFF333333.toInt())
     }
 
-    override fun mouseClicked(click: Click, button: Boolean): Boolean {
+    override fun mouseClicked(click: MouseButtonEvent, button: Boolean): Boolean {
         try {
             if (super.mouseClicked(click, button)) return true
             if (button) return false
@@ -151,10 +152,10 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
         return false
     }
 
-    override fun close() { finish() }
+    override fun onClose() { finish() }
 
-    /** 1.21.11 DrawContext has no drawBorder; draw a 1px outline with four fills. */
-    private fun border(context: DrawContext, x: Int, y: Int, w: Int, h: Int, color: Int) {
+    /** 1.21.11 GuiGraphicsExtractor has no drawBorder; draw a 1px outline with four fills. */
+    private fun border(context: GuiGraphicsExtractor, x: Int, y: Int, w: Int, h: Int, color: Int) {
         context.fill(x, y, x + w, y + 1, color)
         context.fill(x, y + h - 1, x + w, y + h, color)
         context.fill(x, y, x + 1, y + h, color)
@@ -162,7 +163,7 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
     }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia setup")
+        private val TITLE = Component.literal("Iustitia setup")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
         private const val LINE_H = 10

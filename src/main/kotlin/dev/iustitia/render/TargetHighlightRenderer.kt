@@ -2,13 +2,12 @@ package dev.iustitia.render
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.network.OtherClientPlayerEntity
-import net.minecraft.client.render.RenderLayers
-import net.minecraft.client.render.VertexRendering
-import net.minecraft.util.hit.EntityHitResult
-import net.minecraft.util.shape.VoxelShapes
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents
+import net.minecraft.client.Minecraft
+import net.minecraft.client.player.RemotePlayer
+import net.minecraft.client.renderer.rendertype.RenderTypes
+import net.minecraft.world.phys.EntityHitResult
+import net.minecraft.world.phys.shapes.Shapes
 
 /**
  * On-world target-highlight overlay (Phase B): draws a tier-colored wireframe box around the OTHER
@@ -24,14 +23,14 @@ import net.minecraft.util.shape.VoxelShapes
  *
  * `WorldRenderContext.matrices()` at AFTER_ENTITIES is the camera-rotation-only view matrix (vanilla
  * applies the camera TRANSLATION per-vertex via the camera-pos offset it passes to its outline
- * draw calls — confirmed by `WorldRenderer.renderTargetBlockOutline` passing `camera.getPos()` to
+ * draw calls — confirmed by `LevelRenderer.renderTargetBlockOutline` passing `camera.getPos()` to
  * `drawBlockOutline`). So translating the matrix by `-cameraPos` puts world-coord geometry on
  * screen, exactly as entity renderers position themselves via `(x - cameraX, …)`. We then draw the
- * entity's world-coord [net.minecraft.entity.Entity.getBoundingBox] with no extra offset.
+ * entity's world-coord [net.minecraft.world.entity.Entity.getBoundingBox] with no extra offset.
  *
  * ## Color
  *
- * `VertexRendering.drawOutline` passes a single `int` to `VertexConsumer.color(int)` (ARGB), so the
+ * `ShapeRenderer.drawOutline` passes a single `int` to `VertexConsumer.color(int)` (ARGB), so the
  * colors below are full-alpha ARGB (0xFFRRGGBB) — robust whether the helper packs its own alpha or
  * treats the int as already-ARGB. Tier-colored: red/yellow always drawn; green only when the user
  * opted into green cues (`nametagGreenEnabled`), so clean players aren't boxed by default.
@@ -44,37 +43,42 @@ object TargetHighlightRenderer {
 
     fun register() {
         try {
-            WorldRenderEvents.AFTER_ENTITIES.register(WorldRenderEvents.AfterEntities { ctx ->
+            // 26.3: world overlays submit into the level frame's collector during COLLECT_SUBMITS
+            // (the WorldRenderEvents.AFTER_ENTITIES replacement) and vanilla's feature passes draw them.
+            LevelRenderEvents.COLLECT_SUBMITS.register(LevelRenderEvents.CollectSubmits { ctx ->
                 try {
-                    if (!ConfigManager.config.targetHighlight) return@AfterEntities
-                    val mc = MinecraftClient.getInstance()
-                    val hit = mc.crosshairTarget
-                    if (hit !is EntityHitResult) return@AfterEntities
+                    if (!ConfigManager.config.targetHighlight) return@CollectSubmits
+                    val mc = Minecraft.getInstance()
+                    val hit = mc.hitResult
+                    if (hit !is EntityHitResult) return@CollectSubmits
                     val entity = hit.entity
-                    if (entity !is OtherClientPlayerEntity) return@AfterEntities
+                    if (entity !is RemotePlayer) return@CollectSubmits
                     val self = mc.player
-                    if (self != null && entity.uuid == self.uuid) return@AfterEntities
+                    if (self != null && entity.uuid == self.uuid) return@CollectSubmits
 
                     val tier = FlagHistory.tierFor(entity.uuid)
-                    if (tier == FlagHistory.Tier.GREEN && !ConfigManager.config.nametagGreenEnabled) return@AfterEntities
+                    if (tier == FlagHistory.Tier.GREEN && !ConfigManager.config.nametagGreenEnabled) return@CollectSubmits
                     val color = when (tier) {
                         FlagHistory.Tier.GREEN -> GREEN
                         FlagHistory.Tier.YELLOW -> YELLOW
                         FlagHistory.Tier.RED -> RED
                     }
 
-                    val camPos = ctx.gameRenderer().camera.getCameraPos()
-                    val matrices = ctx.matrices()
-                    val lines = ctx.consumers().getBuffer(RenderLayers.lines())
-                    matrices.push()
+                    val camPos = ctx.levelState().cameraRenderState.pos
+                    val matrices = ctx.poseStack()
+                    val collector = ctx.submitNodeCollector()
+                    matrices.pushPose()
                     // Rotation-only view matrix → translate by -cameraPos to draw world-coord geometry.
                     matrices.translate(-camPos.x, -camPos.y, -camPos.z)
-                    VertexRendering.drawOutline(
-                        matrices, lines,
-                        VoxelShapes.cuboid(entity.getBoundingBox()),
-                        0.0, 0.0, 0.0, color, 1.0f,
+                    collector.submitShapeOutline(
+                        matrices,
+                        Shapes.box(entity.boundingBox.minX, entity.boundingBox.minY, entity.boundingBox.minZ, entity.boundingBox.maxX, entity.boundingBox.maxY, entity.boundingBox.maxZ),
+                        RenderTypes.LINES,
+                        color,
+                        1.0f,
+                        false,
                     )
-                    matrices.pop()
+                    matrices.popPose()
                 } catch (_: Throwable) {
                     // Fail-open: a render error never crashes the client; the box just doesn't draw.
                 }

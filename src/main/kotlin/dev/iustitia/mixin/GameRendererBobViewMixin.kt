@@ -1,8 +1,9 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.render.GameRenderer
-import net.minecraft.client.util.math.MatrixStack
+import net.minecraft.client.renderer.GameRenderer
+import net.minecraft.client.renderer.state.level.CameraRenderState
+import com.mojang.blaze3d.vertex.PoseStack
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -26,13 +27,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  * freecam-gated) and avoids the generic-`SimpleOption.getValue()` descriptor ambiguity a redirect of
  * the option read would hit. Mixins can inject into `private` methods of their target class.
  *
- * ## Target verified against the named jar
+ * ## Target verified against the 26.3 jar
  *
- * `minecraft-merged-496669bc46-1.21.11-net.fabricmc.yarn.1_21_11.1.21.11+build.6-v2.jar`:
- *  - `private void bobView(net.minecraft.client.util.math.MatrixStack, float)` — the bob apply point.
- *    (Note: it takes a `MatrixStack`, not a `Matrix4f` — verified by javap, not assumed.)
- *  - Called once per frame from `GameRenderer.renderWorld`. `defaultRequire: 1` means a mismatch
- *    fails launch; render-time apply is runtime-only-verifiable per project convention.
+ * `javap -p net.minecraft.client.renderer.GameRenderer`:
+ *  - `private void bobView(CameraRenderState, PoseStack)` — the bob apply point (26.3 added the
+ *    camera-state parameter; the handler derives nothing from it, only the freecam gate uses state).
+ *  - `defaultRequire: 1` means a mismatch fails launch; render-time apply is runtime-only-verifiable.
  *
  * ## Cost when freecam is off
  *
@@ -44,7 +44,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
 class GameRendererBobViewMixin {
 
     @Inject(method = ["bobView"], at = [At("HEAD")], cancellable = true)
-    private fun iustitia_killBobInFreecam(matrices: MatrixStack, tickDelta: Float, ci: CallbackInfo) {
+    private fun iustitia_killBobInFreecam(cameraState: CameraRenderState, matrices: PoseStack, ci: CallbackInfo) {
         try {
             if (ReplayState.freecamActive) ci.cancel()
         } catch (_: Throwable) {

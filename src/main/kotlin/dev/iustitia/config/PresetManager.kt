@@ -2,6 +2,7 @@ package dev.iustitia.config
 
 import com.google.gson.JsonParser
 import dev.iustitia.Iustitia
+import dev.iustitia.util.LegacyStoreMigration
 import net.fabricmc.loader.api.FabricLoader
 import java.nio.file.Files
 import java.nio.file.Path
@@ -245,45 +246,27 @@ object PresetManager {
     }
 
     /** Delete a custom preset. Refuses built-in names (returns false — the name is sanitized
-     *  BEFORE the guard). Removes the file from BOTH locations — roaming and the legacy game-dir
-     *  dir — because a same-named preset can exist in each (one save per build generation) and
-     *  [loadCustom] falls through to the legacy copy: deleting only the roaming file would report
-     *  a delete whose preset still loads and still lists. Returns true only if a file was
-     *  actually removed. Fail-open. */
+     *  BEFORE the guard). Returns true only if a file was actually removed. Fail-open. */
     fun deleteCustom(name: String): Boolean {
         val safe = safeName(name) ?: return false
         if (isBuiltIn(safe)) return false
         return try {
-            val removedRoaming = Files.deleteIfExists(presetsDir().resolve("$safe.json"))
-            val removedLegacy = Files.deleteIfExists(legacyGameDirPresets().resolve("$safe.json"))
-            removedRoaming || removedLegacy
+            Files.deleteIfExists(presetsDir().resolve("$safe.json"))
         } catch (_: Throwable) {
             false
         }
     }
 
-    /** Custom preset names in the presets dir, sorted, de-duplicated. Reads the roaming dir
-     *  first and falls back to (plus merges) the legacy game-dir location so presets saved by
-     *  older builds stay listed and loadable. Empty list only when neither exists / reads fail.
-     *  Fail-open. */
+    /** Custom preset names in the presets dir, sorted. Empty list only when the dir does not
+     *  exist / reads fail. Fail-open. */
     fun listCustom(): List<String> = try {
         val dir = presetsDir()
-        val legacy = legacyGameDirPresets()
-        val current = if (!Files.isDirectory(dir)) emptyList() else Files.list(dir).use { stream ->
+        if (!Files.isDirectory(dir)) emptyList() else Files.list(dir).use { stream ->
             stream.filter { it.toString().endsWith(".json") }
                 .map { it.fileName.toString().removeSuffix(".json") }
                 .sorted()
                 .toList()
         }
-        val old = if (!Files.isDirectory(legacy) || legacy == dir) emptyList() else Files.list(legacy).use { stream ->
-            stream.filter { it.toString().endsWith(".json") }
-                .map { it.fileName.toString().removeSuffix(".json") }
-                .sorted()
-                .toList()
-        }
-        // A name present in BOTH locations resolves to the roaming file (loadCustom checks it
-        // first), so listing de-dupes toward the live one. Sorted for a stable listing.
-        (current + old.filter { it !in current }).sorted()
     } catch (_: Throwable) {
         emptyList()
     }
@@ -392,9 +375,8 @@ object PresetManager {
 
     // ---- internals ----
 
-    /** Load a custom preset JSON → [IustitiaConfig]. Reads the roaming presets dir first, then
-     *  the legacy game-dir location, so a preset saved by an older build still applies —
-     *  [listCustom] lists both locations, so every listed name must also be loadable.
+    /** Load a custom preset JSON → [IustitiaConfig]. Presets live in the game-dir presets dir
+     *  (see [presetsDir]).
      *
      *  The read goes through the HONEST path ([ConfigManager.configFromJsonInto], which throws on
      *  a mistyped value instead of swallowing it): a corrupt or hand-mangled preset file surfaces
@@ -403,8 +385,7 @@ object PresetManager {
      *  round-trip did. Fail-open: unreadable / corrupt → null, never a crash. */
     private fun loadCustom(name: String): IustitiaConfig? = try {
         val safe = safeName(name) ?: return null
-        val roaming = presetsDir().resolve("$safe.json")
-        val file = if (Files.exists(roaming)) roaming else legacyGameDirPresets().resolve("$safe.json")
+        val file = presetsDir().resolve("$safe.json")
         if (!Files.exists(file)) return null
         val obj = JsonParser.parseString(Files.readString(file)).asJsonObject
         val scratch = IustitiaConfig()
@@ -421,32 +402,30 @@ object PresetManager {
         return safe.ifEmpty { null }
     }
 
-    /** Resolve a preset's file path: `<roaming data dir>/presets/<safe>.json`. [safe] is already
+    /** Resolve a preset's file path: `<gameDir>/.iustitia/presets/<safe>.json`. [safe] is already
      *  [safeName]-sanitized (re-sanitizing is idempotent). Null when it is empty. */
     private fun customPath(name: String): Path? {
         val safe = safeName(name) ?: return null
         return presetsDir().resolve("$safe.json")
     }
 
-    /** Presets dir, matching the rest of Iustitia's data layout: `%APPDATA%/.iustitia/presets` on
-     *  Windows (roaming, same tree as clips/exemptions/notes), `<gameDir>/.iustitia/presets`
-     *  elsewhere. A legacy game-dir preset directory is still READ when the roaming one has no
-     *  presets, so presets saved by older builds keep loading after the move. */
+    /** One-shot guard for [presetsDir]'s legacy migration (the util's marker makes a duplicate
+     *  racing run harmless anyway). */
+    @Volatile private var legacyMigrated = false
+
+    /** Presets dir, matching the rest of Iustitia's data layout: `<gameDir>/.iustitia/presets`
+     *  (same tree as clips/exemptions/notes — everything inside the game's own folder). The first
+     *  resolution also runs the one-time legacy-store migration (pre-v1.4.1 custom presets). */
     private fun presetsDir(): Path {
-        val base = roamingBaseDir()
-        return base.resolve("presets")
+        val dir = baseDataDir().resolve("presets")
+        if (!legacyMigrated) {
+            legacyMigrated = true
+            LegacyStoreMigration.migrate("presets", dir) { it.endsWith(".json") }
+        }
+        return dir
     }
 
-    /** Legacy write location (pre-rework builds): the game dir. Checked for backwards-compatible
-     *  LOADS only — new saves always go to [presetsDir]. */
-    private fun legacyGameDirPresets(): Path =
-        FabricLoader.getInstance().gameDir.resolve(".iustitia/presets")
-
-    /** `%APPDATA%` on Windows (the roaming store clips/exemptions/notes already use), else the
-     *  game dir. Same resolution as [dev.iustitia.persistence.PersistenceManager] / ClipStore. */
-    private fun roamingBaseDir(): Path {
-        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
-        return if (!appdata.isNullOrBlank()) java.nio.file.Path.of(appdata).resolve(".iustitia")
-        else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-    }
+    /** Game-dir data dir (`<gameDir>/.iustitia`). Same resolution as
+     *  [dev.iustitia.persistence.PersistenceManager] / ClipStore. */
+    private fun baseDataDir(): Path = FabricLoader.getInstance().gameDir.resolve(".iustitia")
 }

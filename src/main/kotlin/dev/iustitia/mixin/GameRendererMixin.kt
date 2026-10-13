@@ -1,8 +1,8 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.option.Perspective
-import net.minecraft.client.render.GameRenderer
+import net.minecraft.client.CameraType
+import net.minecraft.client.renderer.GameRenderer
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Redirect
@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.Redirect
 /**
  * FREECAM hide first-person hand (Task 6, cosmetic). While [ReplayState.freecamActive] the camera is
  * detached from the local player, but vanilla still renders the player's hand/item in first person
- * (the view is first-person by default). This redirects the `Perspective.isFirstPerson()` gate inside
+ * (the view is first-person by default). This redirects the `CameraType.isFirstPerson()` gate inside
  * `GameRenderer.renderHand` to `false` while freecam is active, so the hand render is skipped that
  * frame — mirroring the Zergatul FreeCam v26.2 reference (which redirects `CameraType.isFirstPerson`
  * in `GameRenderer.renderItemInHand`).
@@ -23,7 +23,7 @@ import org.spongepowered.asm.mixin.injection.Redirect
  *  - `renderHand` calls `GameOptions.getPerspective().isFirstPerson()` exactly once (offset 116);
  *    `ifeq 200` skips the hand render when it returns false. Redirecting it to `false` while
  *    freecamActive skips the hand render.
- *  - Scoped to `method = ["renderHand"]` so the THREE other `Perspective.isFirstPerson()` call sites
+ *  - Scoped to `method = ["renderHand"]` so the THREE other `CameraType.isFirstPerson()` call sites
  *    in `GameRenderer` (`getFov`-area, two in `renderWorld` for camera positioning) are untouched.
  *
  * Fail-open: when freecam is NOT active we delegate to the original `perspective.isFirstPerson()`.
@@ -33,14 +33,16 @@ import org.spongepowered.asm.mixin.injection.Redirect
 class GameRendererMixin {
 
     @Redirect(
-        method = ["renderHand"],
-        at = At(
-            value = "INVOKE",
-            target = "Lnet/minecraft/client/option/Perspective;isFirstPerson()Z",
-            ordinal = 0,
-        ),
+        method = ["renderItemInHand"],
+        at = [
+            At(
+                value = "INVOKE",
+                target = "Lnet/minecraft/client/CameraType;isFirstPerson()Z",
+                ordinal = 0,
+            ),
+        ],
     )
-    private fun iustitia_hideHandInFreecam(perspective: Perspective): Boolean = try {
+    private fun iustitia_hideHandInFreecam(perspective: CameraType): Boolean = try {
         if (ReplayState.freecamActive) false else perspective.isFirstPerson()
     } catch (_: Throwable) {
         perspective.isFirstPerson()

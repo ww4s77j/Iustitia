@@ -11,7 +11,7 @@ import dev.iustitia.math.MathUtil
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.LagCombatCorrelator
 import dev.iustitia.tracking.TrackedPlayer
-import net.minecraft.item.MaceItem
+import net.minecraft.world.item.MaceItem
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.abs
@@ -177,7 +177,7 @@ class CriticalsCheck : Check() {
 
     /** True if the attacker's main hand holds a mace (1.21+); auto-fail-open pre-1.21. */
     private fun isMaceHeld(tp: TrackedPlayer): Boolean = try {
-        tp.entity?.mainHandStack?.item is MaceItem
+        tp.entity?.mainHandItem?.item is MaceItem
     } catch (_: Throwable) {
         false
     }

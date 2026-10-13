@@ -1,34 +1,34 @@
 package dev.iustitia.render
 
-import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBuffer
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.vertex.VertexFormat
 import dev.iustitia.replay.ChunkSnapshot
-import net.minecraft.block.Block
-import net.minecraft.block.BlockRenderType
-import net.minecraft.block.BlockState
-import net.minecraft.block.Blocks
-import net.minecraft.client.MinecraftClient
+import net.minecraft.world.level.block.Block
+import net.minecraft.world.level.block.RenderShape
+import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.level.block.Blocks
+import net.minecraft.client.Minecraft
 import net.minecraft.client.color.block.BlockColors
-import net.minecraft.client.render.BlockRenderLayers
-import net.minecraft.client.render.BufferBuilder
-import net.minecraft.client.render.OverlayTexture
-import net.minecraft.client.render.RenderLayer
-import net.minecraft.client.render.RenderLayers
-import net.minecraft.client.render.model.BakedQuad
-import net.minecraft.client.render.model.BlockModelPart
-import net.minecraft.client.render.model.BlockStateModel
-import net.minecraft.client.util.BufferAllocator
-import net.minecraft.client.util.math.MatrixStack
-import net.minecraft.command.argument.BlockArgumentParser
-import net.minecraft.registry.Registries
-import net.minecraft.util.Identifier
-import net.minecraft.util.math.Direction
-import net.minecraft.util.math.random.Random
+import com.mojang.blaze3d.vertex.BufferBuilder
+import net.minecraft.client.renderer.texture.OverlayTexture
+import net.minecraft.client.renderer.rendertype.RenderType
+import net.minecraft.client.renderer.rendertype.RenderTypes
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart
+import net.minecraft.client.resources.model.geometry.BakedQuad
+import net.minecraft.client.renderer.texture.TextureAtlas
+import com.mojang.blaze3d.vertex.QuadInstance
+import com.mojang.blaze3d.vertex.ByteBufferBuilder
+import net.minecraft.commands.arguments.blocks.BlockStateParser
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.resources.Identifier
+import net.minecraft.core.Direction
+import net.minecraft.util.ARGB
+import net.minecraft.util.RandomSource
 
 /**
  * Resolves a captured [ChunkSnapshot] into **per-block, face-culled, precomputed quads** grouped by
- * [RenderLayer], so [ChunkWorldRenderer] can draw the clip's solid world each frame by emitting those
+ * [RenderType], so [ChunkWorldRenderer] can draw the clip's solid world each frame by emitting those
  * quads directly — no per-frame model lookup, no buried faces. This replaces the old
  * `renderBlockAsEntity`-per-surface-block path (which emitted every block's full 6-face model every
  * frame, including faces buried against opaque neighbours — the ~380→40 FPS collapse on max-radius
@@ -36,17 +36,17 @@ import net.minecraft.util.math.random.Random
  *
  * ## Face cull = vanilla's rule (no holes)
  *
- * For each surface block, for each [BlockModelPart], we replicate
- * `BlockModelRenderer.renderFlat` exactly:
+ * For each surface block, for each [BlockStateModelPart], we replicate
+ * `ModelBlockRenderer.tesselateFlat` exactly:
  *  - per [Direction] `d`: `part.getQuads(d)` is emitted only when
- *    `Block.shouldDrawSide(thisState, neighborState, d)` is true (neighbour resolved from the raw
- *    snapshot; region-edge / air → air state → shouldDrawSide returns true → the face draws, closing
+ *    `Block.shouldRenderFace(thisState, neighborState, d)` is true (neighbour resolved from the raw
+ *    snapshot; region-edge / air → air state → shouldRenderFace returns true → the face draws, closing
  *    the shell at the captured-region edge, as before).
  *  - `part.getQuads(null)` (the general / non-culled quads — torches, fences, plants, and any model
  *    detail without a cull face) is **always** emitted. This is the rule that prevents holes in
  *    non-cube blocks; a naive per-direction cull that skipped `getQuads(null)` would drop them.
  *
- * `Block.shouldDrawSide` (vanilla-correct: opaque + transparent + same-block rules, e.g.
+ * `Block.shouldRenderFace` (vanilla-correct: opaque + transparent + same-block rules, e.g.
  * glass-vs-glass, leaves-vs-leaves) replaces the old crude `isOpaqueAt` approximation for the
  * **per-face** decision. `isOpaqueAt` is retained only for the block-level surface-shell skip (a block
  * whose 6 neighbours are all opaque is fully interior and never seen — pure overdraw).
@@ -64,9 +64,12 @@ import net.minecraft.util.math.random.Random
  *
  * ## Cache + fail-open
  *
- * Per-name caches: `BlockState` (`stateCache`), tint ARGB (`tintCache`), `RenderLayer` (`layerCache`)
+ * Per-name caches: `BlockState` (`stateCache`), tint ARGB (`tintCache`)
  * — block names repeat heavily across chunks, so these persist across chunk bakes and are a big win.
- * A new snapshot (new clip) clears all of it via [ensureSnapshot]. `Registries.BLOCK` is a
+ * The per-quad RenderType is derived from each `BakedQuad`'s own `ChunkSectionLayer`
+ * (`materialInfo().layer()` — the 26.3 model; the old per-block `ItemBlockRenderTypes` lookup is
+ * gone) and is memoized inside `RenderTypes`. A new snapshot (new clip) clears the caches
+ * via [ensureSnapshot]. `BuiltInRegistries.BLOCK` is a
  * DefaultedRegistry → an unknown id resolves to AIR (renders as nothing, counts as a transparent
  * neighbour) — the fail-open behaviour we want. [free] drops everything (called from
  * [dev.iustitia.replay.ReplayState.stop]). All wrapped fail-open so a render/bake error degrades
@@ -77,8 +80,8 @@ import net.minecraft.util.math.random.Random
  * Block **properties** — since v7 the palette key carries the full state string for stateful blocks
  * and [stateFor] parses the EXACT recorded state, so a stairs renders in its recorded facing (not the
  * default), and non-full/transparent blocks feed [shouldDrawSide] their real shape (neighbours behind
- * glass/stairs/slabs render). The block-level surface-shell skip uses [BlockState.isOpaqueFullCube]
- * (NOT [BlockState.isOpaque], which is true for opaque-material slabs/stairs and would wrongly skip a
+ * glass/stairs/slabs render). The block-level surface-shell skip uses [BlockState.isSolidRender]
+ * (NOT [BlockState.canOcclude], which is true for opaque-material slabs/stairs and would wrongly skip a
  * block fully surrounded by them → the "missing texture behind slabs/stairs" bug). Pre-v7 clips have
  * only bare-id palette entries → default state (today's behaviour). Block **entities** (chest contents,
  * sign text, banners) and **fluids** (`INVISIBLE` render type, skipped here) are still not rendered.
@@ -90,7 +93,9 @@ object ChunkMesher {
 
     /** One surface block's precomputed, face-culled quads at an absolute recorded coord, with the
      *  block's tint (r,g,b floats in 0..1; alpha is always 1 — replays are fullbright). Built once at
-     *  bake time; [ChunkWorldRenderer] emits these directly each frame via `VertexConsumer.quad`. */
+     *  bake time; [ChunkWorldRenderer] emits these via `VertexConsumer.putBakedQuad` (the 26.3 quad
+     *  emission — the old `VertexConsumer.quad` is gone), either into the static bake buffer or the
+     *  submit-node custom-geometry fallback. */
     data class BlockQuads(
         val x: Int, val y: Int, val z: Int,
         val r: Float, val g: Float, val b: Float,
@@ -99,19 +104,19 @@ object ChunkMesher {
 
     /** One captured chunk's surface quads baked into a **static GPU vertex buffer** (the C2 perf
      *  rework). Baked ONCE at bake time into the layer's vertex format
-     *  (`POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL`, `DrawMode.QUADS`) with **absolute recorded
-     *  coords** already baked into the vertices (a per-block `translate(x,y,z)` was applied at bake
-     *  time, so no per-frame per-block matrix is needed — the renderer binds one model-view matrix
-     *  per frame as the `"DynamicTransforms"` uniform). [vertexCount] = 4 × quad count;
-     *  [indexCount] = 6 × quad count (triangulated at draw time by the shared sequential quad index
-     *  buffer). [vb] is a `GpuBuffer` (USAGE_VERTEX | USAGE_COPY_DST) owned here, closed in [free].
-     *  A bake failure omits the layer from [ChunkBlocks.staticByLayer] entirely (so [vb] is always
-     *  non-null when present) — the renderer then falls back to [ChunkBlocks.byLayer]'s per-frame
-     *  `vc.quad` emit for that layer. Fail-open. */
+     *  (`POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL`, `PrimitiveTopology.QUADS`) with **absolute
+     *  recorded coords** already baked into the vertices (each block's recorded coord was passed as
+     *  the `putBlockBakedQuad` x/y/z offset at bake time, so no per-frame per-block matrix is needed —
+     *  the renderer binds one model-view matrix per frame as the `"DynamicTransforms"` uniform).
+     *  [vertexCount] = 4 × quad count; [indexCount] = 6 × quad count (triangulated at draw time by
+     *  the shared sequential quad index buffer). [vb] is a `GpuBuffer` (USAGE_VERTEX | USAGE_COPY_DST)
+     *  owned here, closed in [free]. A bake failure omits the layer from [ChunkBlocks.staticByLayer]
+     *  entirely (so [vb] is always non-null when present) — the renderer then falls back to
+     *  [ChunkBlocks.byLayer]'s per-frame `putBakedQuad` emit for that layer. Fail-open. */
     data class StaticChunkLayer(val vb: GpuBuffer, val vertexCount: Int, val indexCount: Int)
 
-    /** The precomputed quads of one captured chunk, grouped by [RenderLayer] (so the renderer fetches
-     *  each layer's VertexConsumer once per frame) + a [blockCount] (the number of surface blocks, for
+    /** The precomputed quads of one captured chunk, grouped by [RenderType] (so the renderer draws
+     *  each layer once per frame) + a [blockCount] (the number of surface blocks, for
      *  [ChunkWorldRenderer]'s per-frame lazy-bake budget — a chunk's bake cost scales with its
      *  surface-block count) + the baked-block AABB (`minX..maxX` etc, in **recorded** coords, true
      *  extent — `max` is `maxBlockCoord + 1` so the box covers the full 1-block cell). The AABB lets
@@ -121,12 +126,12 @@ object ChunkMesher {
      *
      *  [staticByLayer] is the C2 static-GPU-mesh path (one [StaticChunkLayer] per layer; the renderer
      *  draws these via its own `RenderPass` with no per-frame re-emit/upload). [byLayer] is kept as the
-     *  fail-open fallback — the per-frame `vc.quad` emit used when a chunk has no static buffer (GPU
+     *  fail-open fallback — the per-frame `putBakedQuad` emit used when a chunk has no static buffer (GPU
      *  bake failed) or when the whole static-draw path throws for a frame. */
     data class ChunkBlocks(
         val chunkX: Int, val chunkZ: Int,
-        val byLayer: Map<RenderLayer, List<BlockQuads>>,
-        val staticByLayer: Map<RenderLayer, StaticChunkLayer>,
+        val byLayer: Map<RenderType, List<BlockQuads>>,
+        val staticByLayer: Map<RenderType, StaticChunkLayer>,
         val blockCount: Int,
         val minX: Int, val minY: Int, val minZ: Int,
         val maxX: Int, val maxY: Int, val maxZ: Int,
@@ -136,18 +141,17 @@ object ChunkMesher {
     @Volatile private var snapIndex: HashMap<Long, ChunkSnapshot.ChunkRec>? = null
     private var baked: LinkedHashMap<Long, ChunkBlocks> = LinkedHashMap()
 
-    /** Fullbright light coord (LightmapTextureManager.MAX_LIGHT_COORDINATE = 0xF000F0) — the same
+    /** Fullbright light coord (LightTexture.MAX_LIGHT_COORDINATE = 0xF000F0) — the same
      *  flat lighting the renderer applies; baked into the static buffer at bake time. */
     private const val FULL_LIGHT = 0xF000F0
 
-    /** Initial CPU capacity for the per-chunk bake [BufferAllocator] (bytes). The allocator grows on
+    /** Initial CPU capacity for the per-chunk bake [ByteBufferBuilder] (bytes). The allocator grows on
      *  demand; this just bounds regrow count. A worst-case dense arena chunk is ~15–30k quads ×
      *  4 verts × 36 B/vert (POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL) ≈ a few MB. */
     private const val STATIC_ALLOC_CAPACITY = 2_097_152
     private var stateCache: HashMap<String, BlockState?> = HashMap(256)
     private var tintCache: HashMap<String, Int> = HashMap(256)
-    private var layerCache: HashMap<String, RenderLayer> = HashMap(256)
-    private val rand: Random = Random.create()
+    private val rand: RandomSource = RandomSource.create()
     private val directions: Array<Direction> = Direction.entries.toTypedArray()
 
     /** Chunk-coord → long key, delegating to the one definition of the encoding
@@ -170,7 +174,6 @@ object ChunkMesher {
         closeStaticBaked(baked); baked = LinkedHashMap()
         stateCache = HashMap(256)
         tintCache = HashMap(256)
-        layerCache = HashMap(256)
         val m = HashMap<Long, ChunkSnapshot.ChunkRec>(snap.chunks.size)
         for (c in snap.chunks) m[key(c.chunkX, c.chunkZ)] = c
         snapIndex = m
@@ -249,7 +252,8 @@ object ChunkMesher {
         }
         // C2: bake each layer's quads into a static GPU vertex buffer once (absolute recorded coords
         // already baked in, so no per-frame per-block matrix). Fail-open per layer — a GPU-bake throw
-        // leaves that layer out of staticByLayer and the renderer falls back to byLayer's vc.quad emit.
+        // leaves that layer out of staticByLayer and the renderer falls back to byLayer's putBakedQuad
+        // emit.
         val staticByLayer = try { bakeStatic(byLayer) } catch (_: Throwable) { emptyMap() }
         val cb = ChunkBlocks(rec.chunkX, rec.chunkZ, byLayer, staticByLayer, blockCount, minX, minY, minZ, maxX, maxY, maxZ)
         baked[k] = cb
@@ -258,13 +262,13 @@ object ChunkMesher {
         null
     }
 
-    /** Compute the face-culled quads of one chunk, grouped by RenderLayer. Block names + tint + layer
-     *  resolve through the shared per-name caches. */
-    private fun bakeChunkBlocks(snap: ChunkSnapshot, rec: ChunkSnapshot.ChunkRec): Map<RenderLayer, List<BlockQuads>> {
-        val byLayer = HashMap<RenderLayer, MutableList<BlockQuads>>()
-        val mc = MinecraftClient.getInstance()
-        val brm = mc.blockRenderManager ?: return emptyMap()
-        val blockColors = mc.blockColors
+    /** Compute the face-culled quads of one chunk, grouped by RenderType. Block names + tint resolve
+     *  through the shared per-name caches; each quad's RenderType comes from its own 26.3
+     *  `ChunkSectionLayer` (`materialInfo().layer()`). */
+    private fun bakeChunkBlocks(snap: ChunkSnapshot, rec: ChunkSnapshot.ChunkRec): Map<RenderType, List<BlockQuads>> {
+        val byLayer = HashMap<RenderType, MutableList<BlockQuads>>()
+        val mc = Minecraft.getInstance()
+        val blockColors = mc.getBlockColors()
         val baseX = rec.chunkX shl 4
         val baseZ = rec.chunkZ shl 4
         for (sec in rec.sections) {
@@ -285,8 +289,8 @@ object ChunkMesher {
                 if (name == "minecraft:air") continue
                 val st = stateFor(name) ?: continue
                 // Fluids + invisible-render-type blocks render nothing (matches the old
-                // renderBlockAsEntity self-skip). MODEL + ENTITYBLOCK_ANIMATED proceed via their model.
-                if (st.renderType == BlockRenderType.INVISIBLE) continue
+                // renderBlockAsEntity self-skip). MODEL-render-shape blocks proceed via their model.
+                if (st.renderShape == RenderShape.INVISIBLE) continue
                 // Block-level surface-shell skip: all 6 neighbours opaque ⇒ fully interior ⇒ never seen.
                 if (isOpaqueAt(snap, x + 1, y, z) &&
                     isOpaqueAt(snap, x - 1, y, z) &&
@@ -295,32 +299,39 @@ object ChunkMesher {
                     isOpaqueAt(snap, x, y, z + 1) &&
                     isOpaqueAt(snap, x, y, z - 1)
                 ) continue
-                val model = try { brm.getModel(st) } catch (_: Throwable) { null } ?: continue
-                val parts = try { model.getParts(rand) } catch (_: Throwable) { emptyList() }
+                // Block model: 26.3 resolves states through ModelManager.getBlockStateModelSet() and
+                // the model fills a caller-provided part list (the old BlockRenderDispatcher.getModel
+                // + model.getParts(rand) pair are gone).
+                val model = try { mc.getModelManager().getBlockStateModelSet().get(st) } catch (_: Throwable) { null } ?: continue
+                val parts = ArrayList<BlockStateModelPart>(1)
+                try { model.collectParts(rand, parts) } catch (_: Throwable) {}
                 if (parts.isEmpty()) continue
                 val tint = tintFor(name, st, blockColors)
                 val r = ((tint shr 16) and 0xFF) / 255f
                 val g = ((tint shr 8) and 0xFF) / 255f
                 val b = (tint and 0xFF) / 255f
-                val layer = layerFor(name, st)
-                val quads = ArrayList<BakedQuad>(8)
+                // One block's quads can straddle layers (translucent + cutout parts), so partition
+                // them by the quad's own section layer → RenderType.
+                val quadsByType = HashMap<RenderType, MutableList<BakedQuad>>(2)
                 for (part in parts) {
                     // Per-direction face quads: emit only when vanilla's shouldDrawSide says the face
                     // is visible (neighbour not opaque-and-same-block). This is the buried-face cull.
                     for (d in directions) {
-                        val faceQuads = try { part.getQuads(d) } catch (_: Throwable) { emptyList() }
+                        val faceQuads: List<BakedQuad> = try { part.getQuads(d) } catch (_: Throwable) { emptyList() }
                         if (faceQuads.isEmpty()) continue
                         if (!shouldDrawSide(st, snap, x, y, z, d)) continue
-                        quads.addAll(faceQuads)
+                        for (q in faceQuads) quadsByType.getOrPut(renderTypeFor(q)) { ArrayList() }.add(q)
                     }
                     // General / non-culled quads (getQuads(null)) — torches, fences, plants, model
                     // detail with no cull face. ALWAYS emitted (vanilla renderFlat does the same) —
                     // skipping these would punch holes in non-cube blocks.
-                    val generalQuads = try { part.getQuads(null) } catch (_: Throwable) { emptyList() }
-                    if (generalQuads.isNotEmpty()) quads.addAll(generalQuads)
+                    val generalQuads: List<BakedQuad> = try { part.getQuads(null) } catch (_: Throwable) { emptyList() }
+                    for (q in generalQuads) quadsByType.getOrPut(renderTypeFor(q)) { ArrayList() }.add(q)
                 }
-                if (quads.isEmpty()) continue
-                byLayer.getOrPut(layer) { ArrayList() }.add(BlockQuads(x, y, z, r, g, b, quads))
+                for ((layer, quads) in quadsByType) {
+                    if (quads.isEmpty()) continue
+                    byLayer.getOrPut(layer) { ArrayList() }.add(BlockQuads(x, y, z, r, g, b, quads))
+                }
             }
         }
         return byLayer
@@ -328,56 +339,62 @@ object ChunkMesher {
 
     /**
      * C2 bake: turn one chunk's per-layer [BlockQuads] into **static GPU vertex buffers** (one per
-     * layer). Each layer is emitted ONCE into a `BufferBuilder` (`DrawMode.QUADS`, the layer's own
-     * `VertexFormat` — `POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL`) using a bake-time `MatrixStack`
-     * that translates each block to its absolute recorded coord, so the baked vertices carry absolute
-     * positions and the renderer needs no per-frame per-block matrix (just one model-view uniform per
-     * frame). The built `ByteBuffer` is uploaded once via `RenderSystem.getDevice().createBuffer`
-     * (`USAGE_VERTEX | USAGE_COPY_DST`), then the CPU buffer is released. This is the same `vc.quad`
-     * work the renderer used to do **per frame**, now done **once per chunk** — moving the ~90%
-     * per-frame emission cost to a one-time, lazy-budgeted bake. Per-layer fail-open: a throw for one
-     * layer leaves it absent from the result and the renderer falls back to that layer's [byLayer].
+     * layer). Each layer is emitted ONCE into a `BufferBuilder` (`PrimitiveTopology.QUADS`, the
+     * layer's own `VertexFormat` — the entity block format, `POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL`)
+     * with each block's absolute recorded coord passed as the `putBlockBakedQuad` x/y/z offset, so the
+     * baked vertices carry absolute positions and the renderer needs no per-frame per-block matrix
+     * (just one model-view uniform per frame). The built `ByteBuffer` is uploaded once via
+     * `RenderSystem.getDevice().createBuffer` (`USAGE_VERTEX | USAGE_COPY_DST`), then the CPU buffer is
+     * released. This is the same quad-emission work the renderer used to do **per frame**, now done
+     * **once per chunk** — moving the ~90% per-frame emission cost to a one-time, lazy-budgeted bake.
+     * Per-layer fail-open: a throw for one layer leaves it absent from the result and the renderer
+     * falls back to that layer's [byLayer].
      */
-    private fun bakeStatic(byLayer: Map<RenderLayer, List<BlockQuads>>): Map<RenderLayer, StaticChunkLayer> {
-        val out = HashMap<RenderLayer, StaticChunkLayer>()
+    private fun bakeStatic(byLayer: Map<RenderType, List<BlockQuads>>): Map<RenderType, StaticChunkLayer> {
+        val out = HashMap<RenderType, StaticChunkLayer>()
         if (byLayer.isEmpty()) return out
         val dev = try { RenderSystem.getDevice() } catch (_: Throwable) { null } ?: return out
-        val ms = MatrixStack()
+        // Reused per-block quad state (tint + fullbright + no overlay — replays are fullbright, the
+        // same values the old per-frame `vc.quad` call passed); `putBlockBakedQuad` copies it per vertex.
+        val qi = QuadInstance()
         for ((layer, blocks) in byLayer) {
             try {
                 if (blocks.isEmpty()) continue
-                val alloc = BufferAllocator(STATIC_ALLOC_CAPACITY)
+                val alloc = ByteBufferBuilder(STATIC_ALLOC_CAPACITY)
                 try {
-                    val bb = BufferBuilder(alloc, VertexFormat.DrawMode.QUADS, layer.getVertexFormat())
+                    val bb = BufferBuilder(alloc, layer.primitiveTopology(), layer.format())
                     for (bq in blocks) {
-                        ms.push()
-                        ms.translate(bq.x.toFloat(), bq.y.toFloat(), bq.z.toFloat())
-                        val entry = ms.peek()
-                        for (q in bq.quads) {
-                            try {
-                                bb.quad(entry, q, bq.r, bq.g, bq.b, 1f, FULL_LIGHT, OverlayTexture.DEFAULT_UV)
-                            } catch (_: Throwable) {
-                                // skip one bad quad, keep the rest of the chunk
+                        try {
+                            qi.setColor(ARGB.color((bq.r * 255f).toInt(), (bq.g * 255f).toInt(), (bq.b * 255f).toInt()))
+                            qi.setLightCoords(FULL_LIGHT)
+                            qi.setOverlayCoords(OverlayTexture.NO_OVERLAY)
+                            for (q in bq.quads) {
+                                try {
+                                    bb.putBlockBakedQuad(bq.x.toFloat(), bq.y.toFloat(), bq.z.toFloat(), q, qi)
+                                } catch (_: Throwable) {
+                                    // skip one bad quad, keep the rest of the chunk
+                                }
                             }
+                        } catch (_: Throwable) {
+                            // skip one bad block, keep the rest of the chunk
                         }
-                        ms.pop()
                     }
-                    val built = bb.end()
+                    val built = bb.build() ?: continue
                     try {
-                        val bytes = built.getBuffer()
+                        val bytes = built.vertexBuffer()
                         val vb = dev.createBuffer(
                             java.util.function.Supplier<String> { "iustitia-chunk-static" },
                             GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST,
                             bytes,
                         )
                         try {
-                            val vertexCount = built.getDrawParameters().vertexCount()
-                            // DrawMode.QUADS: 4 verts/quad → 6 indices/quad (triangulated at draw by the
+                            val vertexCount = built.drawState().vertexCount()
+                            // QUADS topology: 4 verts/quad → 6 indices/quad (triangulated at draw by the
                             // shared sequential quad index buffer).
                             out[layer] = StaticChunkLayer(vb, vertexCount, vertexCount / 4 * 6)
                         } catch (t: Throwable) {
                             // vb is ours until the [out] assignment hands ownership to the layer —
-                            // a throw in between (getDrawParameters, HashMap put) leaked the GPU
+                            // a throw in between (drawState, HashMap put) leaked the GPU
                             // buffer: nothing owned it, so nothing closed it on teardown. Close it
                             // here and rethrow into the per-layer fail-open catch below.
                             try { vb.close() } catch (_: Throwable) {}
@@ -397,34 +414,34 @@ object ChunkMesher {
     }
 
     /**
-     * Vanilla face-cull rule (mirrors `BlockModelRenderer.shouldDrawFace` with the cull flag set):
-     * a face draws when [Block.shouldDrawSide] returns true for the neighbour in direction [d]. The
+     * Vanilla face-cull rule (mirrors `ModelBlockRenderer.shouldRenderFace` with the cull flag set):
+     * a face draws when [Block.shouldRenderFace] returns true for the neighbour in direction [d]. The
      * neighbour state resolves from the raw snapshot; region-edge / air → AIR default state →
-     * shouldDrawSide returns true → the face draws (closes the shell at the captured-region edge).
+     * shouldRenderFace returns true → the face draws (closes the shell at the captured-region edge).
      * Fail-open to true (draw the face) on any throw — drawing an extra face is harmless, dropping one
      * would leave a hole.
      */
     private fun shouldDrawSide(state: BlockState, snap: ChunkSnapshot, x: Int, y: Int, z: Int, d: Direction): Boolean = try {
-        val nName = snap.nameAt(x + d.offsetX, y + d.offsetY, z + d.offsetZ)
-        val nState = if (nName == null || nName == "minecraft:air") Blocks.AIR.defaultState else stateFor(nName)
-        if (nState == null) true else Block.shouldDrawSide(state, nState, d)
+        val nName = snap.nameAt(x + d.stepX, y + d.stepY, z + d.stepZ)
+        val nState = if (nName == null || nName == "minecraft:air") Blocks.AIR.defaultBlockState() else stateFor(nName)
+        if (nState == null) true else Block.shouldRenderFace(state, nState, d)
     } catch (_: Throwable) { true }
 
     /** Resolve a palette name to its BlockState, memoized in [stateCache]. null = bad name / throw.
      *
      *  v7 palette keys carry the EXACT recorded state when the block has properties —
-     *  `"minecraft:stairs[facing=east,half=top,shape=straight]"` (BlockArgumentParser-compatible form,
+     *  `"minecraft:stairs[facing=east,half=top,shape=straight]"` (BlockStateParser-compatible form,
      *  written by [dev.iustitia.replay.ChunkCapture.stateKey]). A key with `[` is parsed via
-     *  [BlockArgumentParser.block] into the precise state → correct facing/shape/half (fixes the v1
+     *  [BlockStateParser.parseForBlock] into the precise state → correct facing/shape/half (fixes the v1
      *  "stairs/slabs render in their default facing" bug) AND feeds [shouldDrawSide]/[isOpaqueAt] the
      *  real neighbour shape (fixes the "blocks behind non-full/transparent blocks don't render" cull
-     *  bug). A propertyless key (`"minecraft:stone"`) takes the fast path (today's defaultState lookup).
-     *  Pre-v7 clips have only propertyless/bare-id keys → identical to today. Fail-open: a bad property
-     *  value (CommandSyntaxException) falls back to the bare-id defaultState (today's behaviour — the
+     *  bug). A propertyless key (`"minecraft:stone"`) takes the fast path (today's defaultBlockState
+     *  lookup). Pre-v7 clips have only propertyless/bare-id keys → identical to today. Fail-open: a bad
+     *  property value (CommandSyntaxException) falls back to the bare-id default block state (today's behaviour — the
      *  block renders in its default orientation instead of not at all); a bad id → null (skip / treat
      *  as transparent, same as today's AIR-from-DefaultedRegistry result).
      *
-     *  NB: Registries.BLOCK is a DefaultedRegistry, so get(unknownId) returns AIR (never null) — an
+     *  NB: BuiltInRegistries.BLOCK is a DefaultedRegistry, so get(unknownId) returns AIR (never null) — an
      *  unknown block resolves to air, which renders as nothing and is a transparent neighbour —
      *  exactly the fail-open behaviour we want, so no special unknown-skip needed. */
     private fun stateFor(name: String): BlockState? {
@@ -441,33 +458,45 @@ object ChunkMesher {
     /** The uncached half of [stateFor]: resolve a palette name once, no memoization. */
     private fun resolveState(name: String): BlockState? = try {
         if ('[' in name) {
-            // Registries.BLOCK is a DefaultedRegistry<Block> which IS-A RegistryWrapper.Impl<Block>
-            // (Registry extends RegistryWrapper.Impl), so it's passed directly as the wrapper the
+            // BuiltInRegistries.BLOCK is a DefaultedRegistry<Block> which IS-A HolderLookup<Block>
+            // (Registry extends HolderLookup.RegistryLookup), so it's passed directly as the lookup the
             // parser resolves block ids + properties against.
-            BlockArgumentParser.block(Registries.BLOCK, name, false).blockState()
+            BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, name, false).blockState()
         } else {
             val id = Identifier.tryParse(name) ?: return null
-            Registries.BLOCK.get(id).defaultState
+            BuiltInRegistries.BLOCK.getValue(id).defaultBlockState()
         }
     } catch (_: Throwable) {
         // fall back to the bare-id default state (today's behaviour) — a bad property value still
         // renders the block in its default orientation instead of skipping it entirely.
         val bare = name.substringBefore('[')
         val id = Identifier.tryParse(bare) ?: return null
-        try { Registries.BLOCK.get(id).defaultState } catch (_: Throwable) { null }
+        try { BuiltInRegistries.BLOCK.getValue(id).defaultBlockState() } catch (_: Throwable) { null }
     }
 
-    /** Resolve a block's tint colour (ARGB int) for tint index 0, memoized in [tintCache]. Same call
-     *  the old renderBlockAsEntity made (BlockColors.getColor with a null BlockRenderView → the
-     *  non-biome default for grass etc.; no-tint blocks return 0xFFFFFF). Fail-open to white. */
+    /** Resolve a block's tint colour (ARGB int) for tint index 0, memoized in [tintCache]. The 26.3
+     *  replacement for the old `BlockColors.getColor(state, null, null, 0)` call: the index-0
+     *  [net.minecraft.client.color.block.BlockTintSource]'s no-world colour (the non-biome default for
+     *  grass etc.; a no-tint block has no source → null → white, matching the old -1/0xFFFFFF result).
+     *  Fail-open to white. */
     private fun tintFor(name: String, st: BlockState, blockColors: BlockColors): Int = tintCache.getOrPut(name) {
-        try { blockColors.getColor(st, null, null, 0) } catch (_: Throwable) { 0xFFFFFF }
+        try { blockColors.getTintSource(st, 0)?.color(st) ?: 0xFFFFFF } catch (_: Throwable) { 0xFFFFFF }
     }
 
-    /** Resolve a block's entity-block RenderLayer, memoized in [layerCache]. Same routing the old
-     *  renderBlockAsEntity used (BlockRenderLayers.getEntityBlockLayer). Fail-open to SOLID. */
-    private fun layerFor(name: String, st: BlockState): RenderLayer = layerCache.getOrPut(name) {
-        try { BlockRenderLayers.getEntityBlockLayer(st) } catch (_: Throwable) { RenderLayers.solid() }
+    /** The RenderType a quad with section layer [layer] draws through. 26.3 dropped the per-block
+     *  `ItemBlockRenderTypes.getEntityBlockLayer` lookup — every [BakedQuad] now carries its own
+     *  [ChunkSectionLayer] in `materialInfo()`. SOLID and CUTOUT share the alpha-tested cutout type
+     *  (harmless for opaque textures) so a chunk still batches into at most two layers — cutout +
+     *  translucency — exactly the two-layer split the C2 path always drew. Fail-open: an unknown /
+     *  missing layer draws as cutout. */
+    private fun renderTypeFor(quad: BakedQuad): RenderType = try {
+        if (quad.materialInfo()?.layer() == ChunkSectionLayer.TRANSLUCENT) {
+            RenderTypes.entityTranslucentCull(TextureAtlas.LOCATION_BLOCKS)
+        } else {
+            RenderTypes.entityCutout(TextureAtlas.LOCATION_BLOCKS)
+        }
+    } catch (_: Throwable) {
+        RenderTypes.entityCutout(TextureAtlas.LOCATION_BLOCKS)
     }
 
     /** Read palette index [entry] (0..4095) → palette name, honouring the 1-vs-2 byte width. Fail-open null. */
@@ -482,16 +511,16 @@ object ChunkMesher {
     } catch (_: Throwable) { null }
 
     /** True when the block at (x,y,z) is a **full opaque cube** (used for the block-level surface-shell
-     *  skip only — the per-face cull uses [shouldDrawSide]/Block.shouldDrawSide, which is shape-aware).
+     *  skip only — the per-face cull uses [shouldDrawSide]/Block.shouldRenderFace, which is shape-aware).
      *  `null` (outside the captured region) and air count as NOT opaque. Reads the raw snapshot;
      *  fail-open to not-opaque.
      *
-     *  NB: this MUST use [BlockState.isOpaqueFullCube], NOT [BlockState.isOpaque]. `isOpaque` is the
+     *  NB: this MUST use [BlockState.isSolidRender], NOT [BlockState.canOcclude]. `canOcclude` is the
      *  raw material flag — TRUE for stone/oak **slabs and stairs** (opaque material) even though they
-     *  are not full cubes. Using `isOpaque` here would wrongly skip a block whose 6 neighbours are all
-     *  slabs/stairs (each `isOpaque==true`) even though parts of its faces are visible through the
+     *  are not full cubes. Using `canOcclude` here would wrongly skip a block whose 6 neighbours are all
+     *  slabs/stairs (each `canOcclude==true`) even though parts of its faces are visible through the
      *  non-full neighbours' open halves → the intermittent "missing texture behind slabs/stairs" bug.
-     *  `isOpaqueFullCube` is true only when the neighbour both occludes AND is a full 1×1×1 cube, so a
+     *  `isSolidRender` is true only when the neighbour both occludes AND is a full 1×1×1 cube, so a
      *  block is skipped only when it is genuinely fully buried (the per-face cull would draw nothing
      *  anyway). Slabs/stairs/glass/leaves all return false → never trigger the skip → the block bakes
      *  and the shape-aware per-face cull handles it correctly. */
@@ -499,7 +528,7 @@ object ChunkMesher {
         val n = snap.nameAt(x, y, z) ?: return false
         if (n == "minecraft:air") return false
         val st = stateFor(n) ?: return false
-        st.isOpaqueFullCube
+        st.isSolidRender
     } catch (_: Throwable) { false }
 
     /** Drop the cache (called from [dev.iustitia.replay.ReplayState.stop]). Idempotent + fail-open.
@@ -514,7 +543,6 @@ object ChunkMesher {
             baked = LinkedHashMap()
             stateCache = HashMap(256)
             tintCache = HashMap(256)
-            layerCache = HashMap(256)
         } catch (_: Throwable) {}
     }
 

@@ -1,6 +1,6 @@
 package dev.iustitia.history
 
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.phys.Vec3
 import java.util.UUID
 
 /**
@@ -30,7 +30,7 @@ data class Evidence(
     val subLabel: String? = null,
     val measurement: Double? = null,
     val threshold: Double? = null,
-    val pos: Vec3d? = null,
+    val pos: Vec3? = null,
     val victim: UUID? = null,
     val extra: String? = null,
 )

@@ -5,10 +5,10 @@ import dev.iustitia.replay.ClipCodec
 import dev.iustitia.replay.ClipPlayback
 import dev.iustitia.replay.ClipStore
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.gui.Click
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.text.Text
+import net.minecraft.client.input.MouseButtonEvent
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.network.chat.Component
 
 /**
  * `/ius clips` — the clip manager. A manually-rendered, scrollable list of every saved `.iusclip`
@@ -16,9 +16,9 @@ import net.minecraft.text.Text
  * — no per-snap data loaded just to show the list). **Left-click a row plays the clip** (loads it
  * fully + starts a replay, like `/ius playclip <name>`); **right-click deletes it** ([ClipStore.delete]).
  *
- * Manual rendering (not [net.minecraft.client.gui.widget.ElementListWidget]) mirrors
+ * Manual rendering (not [net.minecraft.client.gui.components.ContainerObjectSelectionList]) mirrors
  * [PlayerSearchScreen] — keeps the whole interaction under our control via the confirmed 1.21.11
- * `Click`-based input APIs and avoids the `EntryListWidget$Entry`/`Click` dispatch uncertainty.
+ * `MouseButtonEvent`-based input APIs and avoids the `EntryListWidget$Entry`/`MouseButtonEvent` dispatch uncertainty.
  * Whole body fail-open. Display-only: adds NO detection.
  */
 class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
@@ -29,7 +29,7 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
     private var scroll: Int = 0
     private var status: String? = null
 
-    override fun shouldPause(): Boolean = false
+    override fun isPauseScreen(): Boolean = false
 
     override fun init() {
         try { rebuild() } catch (_: Throwable) {}
@@ -43,16 +43,16 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
         } catch (_: Throwable) { rows = emptyList() }
     }
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+    override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
         try {
             context.fill(0, 0, this.width, this.height, BG)
-            val tr = this.textRenderer
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lClips"), 10, 10, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7Saved .iusclip files — §fleft-click §7to play · §fright-click §7to delete"), 10, 24, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7" + ClipStore.dirDisplay()), 10, 38, WHITE)
+            val tr = this.font
+            context.text(tr, Component.literal("§8[§diustitia§8] §f§lClips"), 10, 10, WHITE)
+            context.text(tr, Component.literal("§7Saved .iusclip files — §fleft-click §7to play · §fright-click §7to delete"), 10, 24, WHITE)
+            context.text(tr, Component.literal("§7" + ClipStore.dirDisplay()), 10, 38, WHITE)
             if (rows.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7No saved clips. Save one with §f/ius clip <seconds> [name]§7."), 10, listTop + 2, WHITE)
-                status?.let { context.drawTextWithShadow(tr, Text.literal(it), 10, this.height - 14, WHITE) }
+                context.text(tr, Component.literal("§7No saved clips. Save one with §f/ius clip <seconds> [name]§7."), 10, listTop + 2, WHITE)
+                status?.let { context.text(tr, Component.literal(it), 10, this.height - 14, WHITE) }
                 return
             }
             val maxScroll = maxScroll()
@@ -71,16 +71,16 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
                     val chunks = if (it.chunkSections > 0) " §7world §f${it.chunkSections}§7 sections" else ""
                     "$base$terrain$chunks"
                 } ?: "§8(unreadable)"
-                context.drawTextWithShadow(tr, Text.literal("§f${r.name} §7— $counts §8[▶ play] §c[✕ del]"), listLeft + 2, y + 3, WHITE)
+                context.text(tr, Component.literal("§f${r.name} §7— $counts §8[▶ play] §c[✕ del]"), listLeft + 2, y + 3, WHITE)
             }
             if (maxScroll > 0) drawScrollbar(context, visible, maxScroll)
             val foot = if (rows.size > visible) "§7${rows.size} clips · scroll to see more" else "§7${rows.size} clips"
-            context.drawTextWithShadow(tr, Text.literal(foot), 10, this.height - 14, WHITE)
-            status?.let { context.drawTextWithShadow(tr, Text.literal(it), 10, this.height - 26, WHITE) }
+            context.text(tr, Component.literal(foot), 10, this.height - 14, WHITE)
+            status?.let { context.text(tr, Component.literal(it), 10, this.height - 26, WHITE) }
         } catch (_: Throwable) {}
     }
 
-    override fun mouseClicked(click: Click, button: Boolean): Boolean {
+    override fun mouseClicked(click: MouseButtonEvent, button: Boolean): Boolean {
         try {
             if (super.mouseClicked(click, button)) return true
             val mx = click.x().toInt(); val my = click.y().toInt()
@@ -113,11 +113,11 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
      *  so the two entry points can't drift. */
     private fun play(name: String) {
         try {
-            val mc = client ?: return
+            val mc = minecraft ?: return
             when (val r = ClipPlayback.start(name, ReplayState.SPEED_FULL)) {
                 is ClipPlayback.Result.Started -> {
-                    mc.setScreen(null)
-                    mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${NumFmt.d(digits = 2, v = ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
+                    mc.gui.setScreen(null)
+                    mc.player?.sendSystemMessage(Component.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${NumFmt.d(digits = 2, v = ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."))
                 }
                 is ClipPlayback.Result.LoadFailed -> {
                     // The reason rides along (truncated — the status line is one row wide).
@@ -138,7 +138,10 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
         } catch (_: Throwable) { status = "§c delete failed" }
     }
 
-    override fun close() { client?.setScreen(parent) }
+    override fun onClose() {
+        val p = parent
+        if (p != null) minecraft.setScreenAndShow(p) else minecraft.gui.setScreen(null)
+    }
 
     // ---- layout helpers ----
     private val listTop: Int get() = 56
@@ -147,7 +150,7 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
     private fun rowWidth(): Int = this.width - 20
     private fun visibleRows(): Int = ((listBottom - listTop) / ROW_H).coerceAtLeast(1)
     private fun maxScroll(): Int = (rows.size - visibleRows()).coerceAtLeast(0)
-    private fun drawScrollbar(context: DrawContext, visible: Int, maxScroll: Int) {
+    private fun drawScrollbar(context: GuiGraphicsExtractor, visible: Int, maxScroll: Int) {
         val trackH = listBottom - listTop
         val knobH = (trackH * visible / rows.size).coerceAtLeast(10)
         val knobY = listTop + (trackH - knobH) * scroll / maxScroll
@@ -157,7 +160,7 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
     }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — clips")
+        private val TITLE = Component.literal("Iustitia — clips")
         private const val ROW_H = 14
         // Opaque white (ARGB 0xFFFFFFFF) — see PlayerSearchScreen for the 0xFFFFFF alpha-0 gotcha.
         private const val WHITE = -1

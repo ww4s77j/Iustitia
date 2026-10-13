@@ -1,18 +1,22 @@
 package dev.iustitia.mixin
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.replay.ReplayBuffer
 import dev.iustitia.replay.ReplayState
 import dev.iustitia.render.OffenderCapture
 import dev.iustitia.render.WatchState
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.render.Camera
-import net.minecraft.entity.Entity
-import net.minecraft.util.math.BlockPos
-import net.minecraft.util.math.MathHelper
-import net.minecraft.util.math.Vec3d
-import net.minecraft.world.World
+import net.minecraft.client.Minecraft
+import net.minecraft.client.Camera
+import net.minecraft.client.DeltaTracker
+import net.minecraft.client.player.LocalPlayer
+import net.minecraft.world.entity.Entity
+import net.minecraft.core.BlockPos
+import net.minecraft.util.Mth
+import net.minecraft.world.phys.Vec3
+import net.minecraft.world.level.Level
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.Shadow
 import org.spongepowered.asm.mixin.injection.At
@@ -47,8 +51,8 @@ import kotlin.math.sqrt
  * frustum/entity culling, or that the offender ends up in-frame. If the offender is missing from
  * the shot, the likely cause is entity culling against a frustum computed before this TAIL inject.
  *
- * Target verified against yarn 1.21.11: `Camera.update(World, Entity, boolean, boolean, float)`,
- * `setRotation(float, float)` and `setPos(Vec3d)` are protected (callable here via `@Shadow`).
+ * Target verified against yarn 1.21.11: `Camera.update(Level, Entity, boolean, boolean, float)`,
+ * `setRotation(float, float)` and `setPosition(Vec3)` are protected (callable here via `@Shadow`).
  */
 @Mixin(Camera::class)
 class CameraMixin {
@@ -57,18 +61,56 @@ class CameraMixin {
     protected fun setRotation(yaw: Float, pitch: Float) {}
 
     @Shadow
-    protected fun setPos(pos: Vec3d) {}
+    protected fun setPosition(pos: Vec3) {}
+
+    /**
+     * FREECAM spectator no-black-out (26.3 home; moved here from WorldRendererMixin). The
+     * `LocalPlayer.isSpectator()` consumer moved into `Camera.extractRenderState` in 26.3 — forcing
+     * it to `true` while freecam is active makes the extracted camera state treat the camera like a
+     * spectator's, which clears the "camera inside a solid block → black screen" cull. Exactly one
+     * `isSpectator()` call exists in the 26.3 Camera bytecode. Fail-open: when freecam is NOT active
+     * we delegate to the original call. Cosmetic only; runtime-verifiable.
+     *
+     * ## Why `@WrapOperation`, not `@Redirect` (production crash fix, 2026-10-13)
+     *
+     * Axiom 6.1.3 ships `MixinCamera.extractRenderState_isSpectator` — a MixinExtras
+     * `@WrapOperation` on this exact call site. A wrap relocates the original INVOKE into a
+     * synthetic holder, so a classic `@Redirect` applied afterwards scans the method and finds
+     * ZERO matching instructions — with `defaultRequire: 1` that is a fatal startup crash
+     * ("Redirector iustitia_freecamSpectatorNoBlackout ... Scanned 0 target(s).", observed on a
+     * 233-mod production instance). MixinExtras wrap operations CHAIN with each other (zoomify also
+     * wraps inside this method), so wrapping instead of redirecting makes the cosmetic coexist with
+     * any number of wrappers. Behaviour is identical: while freecam is inactive we pass the original
+     * call through.
+     */
+    @WrapOperation(
+        method = ["extractRenderState"],
+        at = [
+            At(
+                value = "INVOKE",
+                target = "Lnet/minecraft/client/player/LocalPlayer;isSpectator()Z",
+                ordinal = 0,
+            ),
+        ],
+    )
+    private fun iustitia_freecamSpectatorNoBlackout(
+        player: LocalPlayer,
+        original: Operation<Boolean>,
+    ): Boolean = try {
+        if (ReplayState.freecamActive) true else original.call(player)
+    } catch (_: Throwable) {
+        original.call(player)
+    }
 
     @Inject(method = ["update"], at = [At("TAIL")])
     private fun iustitia_selfieCamera(
-        world: World,
-        entity: Entity,
-        thirdPerson: Boolean,
-        other: Boolean,
-        tickDelta: Float,
+        tracker: DeltaTracker,
         ci: CallbackInfo,
     ) {
         try {
+            // 26.3: Camera.update takes only the DeltaTracker (the old world/entity/flags params are
+            // gone); the partial tick is derived from it, matching what the callers pass elsewhere.
+            val tickDelta = tracker.getGameTimeDeltaPartialTick(false)
             // Replay camera (POV / FOLLOW) takes precedence over watch + selfie — a replay in a
             // look-driven mode owns the view while it runs. The ghosts render around the camera; the
             // hide-live mixin suppresses the live OTHER players so only ghosts show.
@@ -88,8 +130,8 @@ class CameraMixin {
                     OffenderCapture.frameActive = false
                     return
                 }
-                val mc = MinecraftClient.getInstance()
-                val offender = mc.world?.getPlayerByUuid(pending.uuid)
+                val mc = Minecraft.getInstance()
+                val offender = mc.level?.getPlayerByUUID(pending.uuid)
                 if (offender == null || offender.isRemoved) {
                     // Not loaded yet this frame — re-arm so we retry next frame (still single-frame
                     // per attempt; the deadline above bounds total retries).
@@ -118,14 +160,14 @@ class CameraMixin {
      * solid block (so a wall-facing offender doesn't yield a black/inside-block screenshot).
      */
     private fun positionSelfie(offender: Entity, tickDelta: Float) {
-        val eye = offender.getCameraPosVec(tickDelta)
-        val yawRad = offender.getYaw() * (PI / 180.0)
+        val eye = offender.getEyePosition(tickDelta)
+        val yawRad = offender.getYRot() * (PI / 180.0)
         // MC yaw convention: yaw 0 → +Z (south); forward = (-sin yaw, +cos yaw).
         val fwdX = -sin(yawRad)
         val fwdZ = cos(yawRad)
 
-        val mc = MinecraftClient.getInstance()
-        val w = mc.world
+        val mc = Minecraft.getInstance()
+        val w = mc.level
         var dist = SELFIE_DIST
         if (w != null) {
             // Step back toward the offender until the camera block is air (avoid wall-clipping).
@@ -138,9 +180,9 @@ class CameraMixin {
                 d -= 0.5
             }
         }
-        val camPos = Vec3d(eye.x + fwdX * dist, eye.y, eye.z + fwdZ * dist)
-        setRotation(offender.getYaw() + 180f, 0f)
-        setPos(camPos)
+        val camPos = Vec3(eye.x + fwdX * dist, eye.y, eye.z + fwdZ * dist)
+        setRotation(offender.getYRot() + 180f, 0f)
+        setPosition(camPos)
     }
 
     /**
@@ -173,13 +215,13 @@ class CameraMixin {
                     if (!ReplayState.freecamActive) return false
                     // Per-frame tickDelta interpolation prev→current (vanilla spectator camera math).
                     val td = tickDelta.coerceIn(0f, 1f)
-                    val x = MathHelper.lerp(td.toDouble(), ReplayState.prevFcX, ReplayState.fcX)
-                    val y = MathHelper.lerp(td.toDouble(), ReplayState.prevFcY, ReplayState.fcY)
-                    val z = MathHelper.lerp(td.toDouble(), ReplayState.prevFcZ, ReplayState.fcZ)
-                    val yaw = MathHelper.lerpAngleDegrees(td, ReplayState.prevFcYaw, ReplayState.fcYaw)
-                    val pitch = MathHelper.lerp(td, ReplayState.prevFcPitch, ReplayState.fcPitch)
+                    val x = Mth.lerp(td.toDouble(), ReplayState.prevFcX, ReplayState.fcX)
+                    val y = Mth.lerp(td.toDouble(), ReplayState.prevFcY, ReplayState.fcY)
+                    val z = Mth.lerp(td.toDouble(), ReplayState.prevFcZ, ReplayState.fcZ)
+                    val yaw = Mth.rotLerp(td, ReplayState.prevFcYaw, ReplayState.fcYaw)
+                    val pitch = Mth.lerp(td, ReplayState.prevFcPitch, ReplayState.fcPitch)
                     setRotation(yaw, pitch)
-                    setPos(Vec3d(x, y, z))
+                    setPosition(Vec3(x, y, z))
                 }
                 ReplayState.CameraMode.POV -> {
                     // Lerped (not floor) frame: the ghost is drawn from currentFrameLerped, so the
@@ -203,10 +245,10 @@ class CameraMixin {
      *  The eye is shifted by [ReplayState.relocOffset] so the camera follows the relocated scene (the
      *  focus ghost is at the user), not the original recorded coords. */
     private fun positionReplayPov(snap: ReplayBuffer.PlayerSnap) {
-        val o = ReplayState.relocOffset ?: Vec3d.ZERO
-        val eye = Vec3d(snap.x.toDouble() + o.x, snap.y.toDouble() + EYE_HEIGHT + o.y, snap.z.toDouble() + o.z)
+        val o = ReplayState.relocOffset ?: Vec3.ZERO
+        val eye = Vec3(snap.x.toDouble() + o.x, snap.y.toDouble() + EYE_HEIGHT + o.y, snap.z.toDouble() + o.z)
         setRotation(snap.yaw, snap.pitch)
-        setPos(eye)
+        setPosition(eye)
     }
 
     /**
@@ -217,10 +259,10 @@ class CameraMixin {
      * shifted by [ReplayState.relocOffset] so the orbit tracks the relocated scene.
      */
     private fun positionReplayFollow(snap: ReplayBuffer.PlayerSnap) {
-        val o = ReplayState.relocOffset ?: Vec3d.ZERO
-        val eye = Vec3d(snap.x.toDouble() + o.x, snap.y.toDouble() + EYE_HEIGHT + o.y, snap.z.toDouble() + o.z)
-        val player = MinecraftClient.getInstance().player ?: return
-        val yawRad = player.getYaw() * (PI / 180.0)
+        val o = ReplayState.relocOffset ?: Vec3.ZERO
+        val eye = Vec3(snap.x.toDouble() + o.x, snap.y.toDouble() + EYE_HEIGHT + o.y, snap.z.toDouble() + o.z)
+        val player = Minecraft.getInstance().player ?: return
+        val yawRad = player.getYRot() * (PI / 180.0)
         val fwdX = -sin(yawRad)
         val fwdZ = cos(yawRad)
 
@@ -236,7 +278,7 @@ class CameraMixin {
         val pitch = (-Math.toDegrees(atan2(dy.toDouble(), horiz.toDouble()))).toFloat()
 
         setRotation(yaw, pitch)
-        setPos(Vec3d(camX, camY, camZ))
+        setPosition(Vec3(camX, camY, camZ))
     }
 
     /**
@@ -256,8 +298,8 @@ class CameraMixin {
             if (dev.iustitia.compat.CompanionMods.followCam) return false
             if (!WatchState.active) return false
             val uuid = WatchState.targetUuid ?: return false
-            val mc = MinecraftClient.getInstance()
-            val offender = mc.world?.getPlayerByUuid(uuid)
+            val mc = Minecraft.getInstance()
+            val offender = mc.level?.getPlayerByUUID(uuid)
             if (offender == null || offender.isRemoved) {
                 // Target left the world — flag an exit for the client-thread tick loop to restore
                 // the HUD/perspective state + chat (option writes stay off this render thread).
@@ -291,10 +333,10 @@ class CameraMixin {
      *  - dir = eye − camPos; yaw = atan2(−dirX, dirZ); pitch = −atan2(dirY, horiz).
      */
     private fun positionWatch(offender: Entity, tickDelta: Float) {
-        val eye = offender.getCameraPosVec(tickDelta)
-        val mc = MinecraftClient.getInstance()
+        val eye = offender.getEyePosition(tickDelta)
+        val mc = Minecraft.getInstance()
         val player = mc.player ?: return
-        val yawRad = player.getYaw() * (PI / 180.0)
+        val yawRad = player.getYRot() * (PI / 180.0)
         // Behind-the-offender offset along the player's look direction (mouse-driven orbit).
         val fwdX = -sin(yawRad)
         val fwdZ = cos(yawRad)
@@ -311,7 +353,7 @@ class CameraMixin {
         val pitch = (-Math.toDegrees(atan2(dy.toDouble(), horiz.toDouble()))).toFloat()
 
         setRotation(yaw, pitch)
-        setPos(Vec3d(camX, camY, camZ))
+        setPosition(Vec3(camX, camY, camZ))
     }
 
     private companion object {

@@ -147,7 +147,7 @@ class RotationTrackingCheck : Check() {
             ctx.hasChange = false; return
         }
         // teleport guard: a >8b jump (the tracker teleport threshold) snaps rotation.
-        if (tp.delta.lengthSquared() > 64.0) {
+        if (tp.delta.lengthSqr() > 64.0) {
             ctx.hasChange = false; ctx.hasRotation = false; return
         }
         if (!ctx.hasRotation) {

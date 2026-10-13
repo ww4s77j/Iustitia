@@ -6,49 +6,48 @@ import dev.iustitia.history.FlagHistory
 import dev.iustitia.mixin.LivingEntityRendererAccessor
 import dev.iustitia.replay.ReplayBuffer
 import dev.iustitia.replay.ReplayState
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.font.TextRenderer
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.render.RenderLayers
-import net.minecraft.client.render.OverlayTexture
-import net.minecraft.client.render.VertexConsumerProvider
-import net.minecraft.client.render.VertexRendering
-import net.minecraft.block.Blocks
-import net.minecraft.client.render.command.OrderedRenderCommandQueue
-import net.minecraft.client.render.entity.EntityRenderer
-import net.minecraft.client.render.entity.LivingEntityRenderer
-import net.minecraft.client.render.entity.PlayerEntityRenderer
-import net.minecraft.client.render.entity.feature.ArmorFeatureRenderer
-import net.minecraft.client.render.entity.feature.FeatureRenderer
-import net.minecraft.client.render.entity.feature.HeldItemFeatureRenderer
-import net.minecraft.client.render.entity.model.BipedEntityModel
-import net.minecraft.client.render.entity.model.EntityModel
-import net.minecraft.client.render.entity.state.BoatEntityRenderState
-import net.minecraft.client.render.entity.state.EntityRenderState
-import net.minecraft.client.render.entity.state.LivingEntityRenderState
-import net.minecraft.client.render.entity.state.MinecartEntityRenderState
-import net.minecraft.client.render.entity.state.PlayerEntityRenderState
-import net.minecraft.client.render.state.CameraRenderState
-import net.minecraft.entity.Entity
-import net.minecraft.entity.EntityType
-import net.minecraft.entity.SpawnReason
-import net.minecraft.client.util.BufferAllocator
-import net.minecraft.client.util.math.MatrixStack
-import net.minecraft.entity.EntityPose
-import net.minecraft.item.ItemDisplayContext
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
-import net.minecraft.registry.Registries
-import net.minecraft.text.Text
-import net.minecraft.util.Arm
-import net.minecraft.util.Identifier
-import net.minecraft.util.math.Box
-import net.minecraft.util.math.RotationAxis
-import net.minecraft.util.math.Vec3d
-import net.minecraft.util.shape.VoxelShapes
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents
+import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.Font
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.renderer.rendertype.RenderTypes
+import net.minecraft.client.renderer.texture.OverlayTexture
+import net.minecraft.client.renderer.rendertype.RenderType
+import net.minecraft.world.level.block.Blocks
+import net.minecraft.client.renderer.SubmitNodeCollector
+import net.minecraft.client.renderer.entity.EntityRenderer
+import net.minecraft.client.renderer.entity.LivingEntityRenderer
+import net.minecraft.client.renderer.entity.player.AvatarRenderer
+import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer
+import net.minecraft.client.renderer.entity.layers.RenderLayer
+import net.minecraft.client.renderer.entity.layers.ItemInHandLayer
+import net.minecraft.client.model.HumanoidModel
+import net.minecraft.client.model.EntityModel
+import net.minecraft.client.renderer.entity.state.BoatRenderState
+import net.minecraft.client.renderer.entity.state.EntityRenderState
+import net.minecraft.client.renderer.entity.state.LivingEntityRenderState
+import net.minecraft.client.renderer.entity.state.MinecartRenderState
+import net.minecraft.client.renderer.entity.state.AvatarRenderState
+import net.minecraft.client.renderer.state.level.CameraRenderState
+import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.EntityType
+import net.minecraft.world.entity.EntitySpawnReason
+import com.mojang.blaze3d.vertex.PoseStack
+import net.minecraft.world.entity.Pose
+import net.minecraft.world.item.ItemDisplayContext
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.network.chat.Component
+import net.minecraft.world.entity.HumanoidArm
+import net.minecraft.resources.Identifier
+import net.minecraft.world.phys.AABB
+import com.mojang.math.Axis
+import org.joml.Matrix4f
+import net.minecraft.world.phys.Vec3
+import net.minecraft.world.phys.shapes.Shapes
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
 import kotlin.math.cos
@@ -70,7 +69,7 @@ import kotlin.math.sqrt
  * colors each ghost by that player's cheat tier (green / yellow / red), highlights the replay focus
  * in cyan with a thicker outline + a `▶` name marker, and floats a name tag above every ghost so you
  * can read who is who. The model is drawn with the same runtime-proven
- * [VertexRendering.drawOutline] path as the target-highlight overlay (depth-tested →
+ * [ShapeRenderer.drawOutline] path as the target-highlight overlay (depth-tested →
  * occluded by walls, no wallhack); only the boxes+labels are new.
  *
  * ## In-world ghosts
@@ -85,7 +84,7 @@ import kotlin.math.sqrt
  *
  * ## Name tags
  *
- * A billboarded name floats above each ghost via [TextRenderer.draw] with `TextLayerType.SEE_THROUGH`
+ * A billboarded name floats above each ghost via [Font.draw] with `TextLayerType.SEE_THROUGH`
  * (always readable, even through terrain). The text is drawn with the view-rotation matrix (camera
  * rotation) after translating to the ghost's world point, which makes it screen-aligned/upright —
  * the same property that lets vanilla entity labels face the camera. Mild distance scaling keeps
@@ -135,7 +134,7 @@ object ReplayRenderer {
     private const val ENTITY_RENDER_RADIUS = 64.0
     private const val ENTITY_RENDER_RADIUS_SQ = ENTITY_RENDER_RADIUS * ENTITY_RENDER_RADIUS
 
-    // Fullbright light coord for see-through text (LightmapTextureManager.MAX_LIGHT_COORDINATE).
+    // Fullbright light coord for see-through text (LightTexture.MAX_LIGHT_COORDINATE).
     private const val FULL_LIGHT = 0xF000F0
 
     // Health-indicator smoothing: the displayed number lerps toward the raw synced target by this
@@ -149,49 +148,37 @@ object ReplayRenderer {
 
     fun register() {
         try {
-            WorldRenderEvents.AFTER_ENTITIES.register(WorldRenderEvents.AfterEntities { ctx ->
+            // COLLECT_SUBMITS fires while the level frame's submit nodes are being gathered: our
+            // ghost submissions land in the same frame and vanilla's feature passes draw them —
+            // the 26.x replacement for the legacy AFTER_ENTITIES direct-draw window.
+            LevelRenderEvents.COLLECT_SUBMITS.register(LevelRenderEvents.CollectSubmits { ctx ->
                 try {
-                    if (!ReplayState.active) return@AfterEntities
+                    if (!ReplayState.active) return@CollectSubmits
                     drawGhosts(ctx)
                 } catch (_: Throwable) {
                     // fail-open: a render error never crashes the client
                 }
             })
-            // Flush the name-tag / alert-marker text LATE — after the world consumer
-            // (ctx.consumers: chunk-world blocks in MODERN + ghost models in every mode) has flushed
-            // its entity layers. The text is BUFFERED into the dedicated Immediate at AFTER_ENTITIES
-            // (matrices baked there) but not emitted until here, so it draws ON TOP of the blocks /
-            // models behind each tag instead of being overdrawn by them (the "nametag invisible when
-            // a block/entity is behind it" symptom — the tag was drawn first, then overwritten by the
-            // later opaque flush). tr.draw bakes each vertex's matrix at draw time, so the AFTER_ENTITIES
-            // matrix is correct even though we flush here; the current matrix is irrelevant at flush.
-            // See [textVcp]. Fail-open: a flush error drops the tags this frame, never crashes.
-            WorldRenderEvents.END_MAIN.register(WorldRenderEvents.EndMain { _ ->
-                try { textVcpImmediate?.draw() } catch (_: Throwable) {}
-            })
-            HudRenderCallback.EVENT.register(HudRenderCallback { context, _ ->
+            HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("iustitia", "replay_hud")) { context, _ ->
                 try { if (ReplayState.active) renderHud(context) } catch (_: Throwable) {}
-            })
+            }
         } catch (_: Throwable) {}
     }
 
-    private fun drawGhosts(ctx: WorldRenderContext) {
-        val mc = MinecraftClient.getInstance()
-        // Partial-tick progress toward the next client tick. Two consumers: the playhead lerp just
-        // below, and [updateCameraState] (vanilla's own entity pass lerps with this value and
-        // `GameRenderer.updateCameraState` feeds it to `getLerpedPos`).
-        val tickDelta = mc.renderTickCounter.getTickProgress(false)
+    private fun drawGhosts(ctx: LevelRenderContext) {
+        val mc = Minecraft.getInstance()
+        // Partial-tick progress toward the next client tick. Consumed by the playhead lerp below
+        // (vanilla's own entity pass lerps with the same value).
+        val tickDelta = mc.deltaTracker.getGameTimeDeltaPartialTick(false)
         val frame = ReplayState.currentFrameLerped(tickDelta) ?: return
         // Draw when EITHER ghost set is non-empty: a frame whose tracked players have all logged off can
         // still carry captured mobs/vehicles (SnapClip short-circuits on empty snaps only, which drops
         // those entity ghosts).
         if (frame.snaps.isEmpty() && frame.entities.isEmpty()) return
-        val camera = ctx.gameRenderer().camera
-        val camPos = camera.getCameraPos()
-        // Refresh the shared camera input BEFORE any ghost draws, so the whole frame sees one state —
-        // the same discipline vanilla's GameRenderer uses (it fills one CameraRenderState per frame and
-        // every entity in that frame reads it). See [updateCameraState].
-        updateCameraState(camera, tickDelta)
+        val camState = ctx.levelState().cameraRenderState
+        val camPos = camState.pos
+        // Camera data comes straight from the frame's own CameraRenderState (vanilla fills exactly
+        // one per frame and every entity reads it) — no local refresh step anymore.
         // The AFTER_ENTITIES modelview carries the CAMERA ROTATION (the view matrix; the camera
         // position is NOT on it, so we translate by -camPos below). A name tag drawn with no
         // counter-rotation inherits that view rotation and renders edge-on / back-facing → invisible.
@@ -203,17 +190,14 @@ object ReplayRenderer {
         // the camera pitched and double-rotated it the rest of the time → nametags 100% invisible.
         // scale(scale,-scale,scale) mirrors vanilla's (0.025,-0.025,0.025): −Y flips glyphs upright
         // (glyph +Y is down), +X keeps them L→R toward the camera (vanilla labels read correctly at +X).
-        val camRot = try { camera.getRotation() } catch (_: Throwable) { null }
-        val matrices = ctx.matrices()
-        val vcp: VertexConsumerProvider = ctx.consumers()
-        // v8 ghost equipment: the live entity-pass queue — the feature renderers (armor / held items)
-        // submit through it, and we submit the ghost skin through it too for proper z-order. Non-null on
-        // the normal AFTER_ENTITIES pass (the world overlay context supplies it); null in a hypothetical
-        // pass where Fabric doesn't → the skin falls back to the Immediate path + features silently skip
-        // (fail-open to the skin-only ghost). Captured once per frame, threaded through drawHumanoid.
-        val queue: OrderedRenderCommandQueue? = try { ctx.commandQueue() } catch (_: Throwable) { null }
-        val lines = vcp.getBuffer(RenderLayers.lines())
-        val tr = mc.textRenderer
+        val camRot: org.joml.Quaternionf? = camState.orientation
+        val matrices = ctx.poseStack()
+        // The frame's own submit-node collector: ghost model/text/outline submissions land here and
+        // vanilla's feature passes draw them with the rest of the frame (the 26.x replacement for the
+        // legacy immediate MultiBufferSource bridge). Fail-open: no collector → nothing to submit into,
+        // skip this frame's ghosts rather than crashing.
+        val collector: SubmitNodeCollector = try { ctx.submitNodeCollector() } catch (_: Throwable) { return }
+        val tr = mc.font
         val focusUuid = ReplayState.focusUuid
         // In POV the camera sits at the focus ghost's eye — don't draw that ghost (you're inside its
         // head; rendering it would fill the view with a wireframe/model). Other ghosts still render.
@@ -222,11 +206,6 @@ object ReplayRenderer {
         // captured tick is within ±1 of the playhead frame (so a ⚠ floats over a ghost exactly as the
         // playhead crosses the moment the cheat fired). Fail-open: an empty/missing map just draws none.
         val nowTick = frame.tick
-        // Dedicated text Immediate (see [textVcp]): the name-tag / alert-marker text is drawn into this
-        // and flushed explicitly after the ghost loop, so it isn't lost to the world consumer's flush.
-        // Falls back to the world vcp if construction failed (and then we skip the explicit flush).
-        val dedicatedText = textVcp()
-        val textVcp: VertexConsumerProvider = dedicatedText ?: vcp
         val alertLabelFor: Map<java.util.UUID, String> = try {
             // Cache per tick (frame.tick changes once per replay tick, not per render frame); the
             // common no-alerts case short-circuits to an empty map without allocating a filter.
@@ -241,13 +220,13 @@ object ReplayRenderer {
                 built
             }
         } catch (_: Throwable) { emptyMap() }
-        matrices.push()
+        matrices.pushPose()
         // Fold the relocation offset into the single shared origin translate: every per-snap
         // translate(s.x, s.y, s.z) below then lands the ghost at (recordedPos + offset) - camPos, i.e.
         // the whole scene shifts as a rigid block to the user (focus player's start → the user). The
         // terrain overlay draws in this same frame, so its absolute-coord quads relocate by the same
         // offset. null offset ⇒ legacy absolute rendering (relocate disabled / unavailable).
-        val o = ReplayState.relocOffset ?: net.minecraft.util.math.Vec3d.ZERO
+        val o = ReplayState.relocOffset ?: net.minecraft.world.phys.Vec3.ZERO
         matrices.translate(-camPos.x + o.x, -camPos.y + o.y, -camPos.z + o.z)
         try {
             // Chunk world (v6+ clip-only; null for /ius replay + pre-v6 clips). Solid, textured blocks
@@ -256,18 +235,18 @@ object ReplayRenderer {
             // Skipped for a Legacy playclip (v1.1.0 = ghosts over the live world, no chunk world) —
             // belt-and-suspenders with ReplayState.start nulling chunks for Legacy.
             if (!ReplayState.legacyPlayclip) {
-                try { ChunkWorldRenderer.render(matrices, vcp, camPos, o) } catch (_: Throwable) {}
+                try { ChunkWorldRenderer.render(matrices, collector, camPos, o) } catch (_: Throwable) {}
             }
             // Terrain shell (clip-only; null for /ius replay). Face-culled, so only the visible
             // surface blocks draw — fully-enclosed blocks contribute nothing. Fail-open per frame.
             // Also skipped for a Legacy playclip (no terrain in v1.1.0).
             if (!ReplayState.legacyPlayclip) {
-                try { TerrainOverlay.render(matrices, lines) } catch (_: Throwable) {}
+                try { TerrainOverlay.render(matrices, collector) } catch (_: Throwable) {}
             }
             for (s in frame.snaps) {
                 try {
                     if (skipFocus && s.uuid() == focusUuid) continue
-                    drawHumanoid(matrices, lines, vcp, queue, textVcp, tr, s, focusUuid, camPos, o, camRot, alertLabelFor[s.uuid()], nowTick)
+                    drawHumanoid(matrices, collector, tr, s, focusUuid, camPos, o, camRot, alertLabelFor[s.uuid()], nowTick)
                 } catch (_: Throwable) {
                     // skip one bad ghost, keep the rest
                 }
@@ -284,9 +263,9 @@ object ReplayRenderer {
                     for (e in frame.entities) {
                         try {
                             if (entityRendererFor(e.typeId) != null) {
-                                drawEntityGhost(matrices, vcp, e, camPos, o, frame.tick)
+                                drawEntityGhost(matrices, collector, e, camPos, o, frame.tick)
                             } else if (nonLivingRendererFor(e.typeId) != null) {
-                                drawNonLivingEntityGhost(matrices, vcp, e, camPos, o, frame.tick)
+                                drawNonLivingEntityGhost(matrices, collector, camState, e, camPos, o, frame.tick)
                             }
                         } catch (_: Throwable) {
                             // skip one bad entity, keep the rest
@@ -294,12 +273,11 @@ object ReplayRenderer {
                     }
                 }
             } catch (_: Throwable) {}
-            // NOTE: the dedicated text Immediate is NOT flushed here — it's flushed at END_MAIN so the
-            // name tags draw on top of the chunk-world blocks + ghost models (see [register]). The text
-            // vertices already baked their matrices at tr.draw time above, so the current matrix doesn't
-            // matter by the time the flush runs. Nothing to do here; fall through to the pop.
+            // NOTE: name tags / alerts are submitted into the frame's collector (see drawHumanoid), so
+            // vanilla's own feature passes draw them on top of the block/model geometry — no manual
+            // flush step is needed anymore. Fall through to the pop.
         } finally {
-            matrices.pop()
+            matrices.popPose()
         }
     }
 
@@ -309,16 +287,13 @@ object ReplayRenderer {
      * non-null, floats a ⚠ marker above the ghost (the playhead just crossed an alert for this player).
      */
     private fun drawHumanoid(
-        matrices: MatrixStack,
-        lines: net.minecraft.client.render.VertexConsumer,
-        vcp: VertexConsumerProvider,
-        queue: OrderedRenderCommandQueue?,
-        textVcp: VertexConsumerProvider,
-        tr: TextRenderer,
+        matrices: PoseStack,
+        collector: SubmitNodeCollector,
+        tr: Font,
         s: ReplayBuffer.PlayerSnap,
         focusUuid: java.util.UUID?,
-        camPos: net.minecraft.util.math.Vec3d,
-        offset: net.minecraft.util.math.Vec3d,
+        camPos: net.minecraft.world.phys.Vec3,
+        offset: net.minecraft.world.phys.Vec3,
         camRot: org.joml.Quaternionf?,
         alertLabel: String?,
         tick: Int,
@@ -346,43 +321,43 @@ object ReplayRenderer {
         // totem events). 0 when the clip has no totems / the accessor is unavailable (pre-v7 clip).
         val totemCount = if (totemOn) try { ReplayState.totemCountFor(uuid) } catch (_: Throwable) { 0 } else 0
 
-        // --- real player model path (experimental, default off): drive vanilla's PlayerEntityRenderer
+        // --- real player model path (experimental, default off): drive vanilla's AvatarRenderer
         //     model with a fabricated render state + the default Steve skin (no skin fetch / no
         //     network). If it draws, skip the box outline. If it returns false (toggle off, renderer
         //     unavailable, or any throw) the box outline below is the fail-open fallback. ---
-        val drewModel = drawModel(matrices, vcp, queue, s, tick)
+        val drewModel = drawModel(matrices, collector, s, tick)
         if (!drewModel) {
             // --- body (feet at the world point; pose applied to the local frame) ---
-            matrices.push()
+            matrices.pushPose()
             try {
                 matrices.translate(s.x.toDouble(), s.y.toDouble(), s.z.toDouble())
                 if (s.pose == ReplayBuffer.POSE_SNEAK) matrices.translate(0.0, -0.12, 0.0)
-                if (laid) matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(90f))
+                if (laid) matrices.mulPose(Matrix4f().rotation(Axis.XP.rotationDegrees(90f)))
                 // legs
-                box(matrices, lines, -LEG_OFF - HALF_W, 0.0, -LIMB_D, -LEG_OFF + HALF_W, LEG_H, LIMB_D, color, width)
-                box(matrices, lines,  LEG_OFF - HALF_W, 0.0, -LIMB_D,  LEG_OFF + HALF_W, LEG_H, LIMB_D, color, width)
+                box(matrices, collector,-LEG_OFF - HALF_W, 0.0, -LIMB_D, -LEG_OFF + HALF_W, LEG_H, LIMB_D, color, width)
+                box(matrices, collector, LEG_OFF - HALF_W, 0.0, -LIMB_D,  LEG_OFF + HALF_W, LEG_H, LIMB_D, color, width)
                 // torso (sits on the legs)
-                box(matrices, lines, -TORSO_HALF, LEG_H, -TORSO_HALF_D, TORSO_HALF, LEG_H + TORSO_H, TORSO_HALF_D, color, width)
+                box(matrices, collector,-TORSO_HALF, LEG_H, -TORSO_HALF_D, TORSO_HALF, LEG_H + TORSO_H, TORSO_HALF_D, color, width)
                 // arms (hang at the torso sides)
-                box(matrices, lines, -ARM_OFF - HALF_W, LEG_H, -LIMB_D, -ARM_OFF + HALF_W, LEG_H + ARM_H, LIMB_D, color, width)
-                box(matrices, lines,  ARM_OFF - HALF_W, LEG_H, -LIMB_D,  ARM_OFF + HALF_W, LEG_H + ARM_H, LIMB_D, color, width)
+                box(matrices, collector,-ARM_OFF - HALF_W, LEG_H, -LIMB_D, -ARM_OFF + HALF_W, LEG_H + ARM_H, LIMB_D, color, width)
+                box(matrices, collector, ARM_OFF - HALF_W, LEG_H, -LIMB_D,  ARM_OFF + HALF_W, LEG_H + ARM_H, LIMB_D, color, width)
                 // head (on top of the torso) — tilted by the buffered pitch around the neck pivot (top
                 // of the torso) so the ghost nods to where the player was looking. Rotation sign is
                 // runtime-verifiable; on any throw we draw it un-tilted (fail-open).
                 val headY = LEG_H + TORSO_H
                 val hh = HEAD / 2
                 try {
-                    matrices.push()
+                    matrices.pushPose()
                     matrices.translate(0.0, headY.toDouble(), 0.0)
-                    matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(s.pitch))
-                    box(matrices, lines, -hh, 0.0, -hh, hh, HEAD.toDouble(), hh, color, width)
+                    matrices.mulPose(Matrix4f().rotation(Axis.XP.rotationDegrees(s.pitch)))
+                    box(matrices, collector,-hh, 0.0, -hh, hh, HEAD.toDouble(), hh, color, width)
                 } catch (_: Throwable) {
-                    box(matrices, lines, -hh, headY, -hh, hh, headY + HEAD, hh, color, width)
+                    box(matrices, collector,-hh, headY, -hh, hh, headY + HEAD, hh, color, width)
                 } finally {
-                    matrices.pop()
+                    matrices.popPose()
                 }
             } finally {
-                matrices.pop()
+                matrices.popPose()
             }
 
             // --- facing nub: a small cube ahead of the head along the buffered LOOK ray (yaw + pitch)
@@ -401,7 +376,7 @@ object ReplayRenderer {
                 val ny = s.y + nubY - sp * reach   // pitch+ (looking down) → nub drops
                 val nz = s.z + fz * cp * reach
                 val r = 0.07
-                box(matrices, lines, nx - r, ny - r, nz - r, nx + r, ny + r, nz + r, color, width)
+                box(matrices, collector,nx - r, ny - r, nz - r, nx + r, ny + r, nz + r, color, width)
             } catch (_: Throwable) {}
         }
 
@@ -411,13 +386,13 @@ object ReplayRenderer {
             // v7 totem-pop counter badge: a gold ⚡<count> appended before the name when the toggle is
             // on and this ghost popped ≥1 totem in the clip window. Pure text — no feature renderer.
             val totemBadge = if (totemOn && totemCount > 0) "§6⚡$totemCount§r " else ""
-            val label = if (isFocus) Text.literal("§f▶ $totemBadge$name") else Text.literal("$totemBadge$name")
+            val label = if (isFocus) Component.literal("§f▶ $totemBadge$name") else Component.literal("$totemBadge$name")
             // labelY = the text's TOP in world space (after the −Y flip the glyphs extend DOWNWARD
             // from this point). The model + hat reach ~1.95 above the feet, so the baseline must sit
             // high enough that the text's bottom (labelY − ~0.25) clears the head — otherwise the tag
             // renders inside the model. Bumped up from 2.05/1.7/0.5 for that clearance.
             val labelY = if (laid) 0.95 else if (s.pose == ReplayBuffer.POSE_SNEAK) 2.15 else 2.5
-            matrices.push()
+            matrices.pushPose()
             try {
                 matrices.translate(s.x.toDouble(), (s.y + labelY).toDouble(), s.z.toDouble())
                 val dx = (s.x + oxF) - camPos.x.toFloat()
@@ -427,17 +402,16 @@ object ReplayRenderer {
                 val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
                 // Billboard via the camera orientation quaternion (see drawGhosts) — cancels the view
                 // rotation already on the stack so the tag is screen-aligned (yaw + pitch), like vanilla.
-                if (camRot != null) matrices.multiply(camRot)
+                if (camRot != null) matrices.mulPose(Matrix4f().rotation(camRot))
                 matrices.scale(scale, -scale, scale)
-                val w = tr.getWidth(label)
+                val w = tr.width(label)
                 val textColor = if (isFocus) FOCUS_COLOR else color
-                tr.draw(
-                    label, -w / 2f, 0f, textColor, false,
-                    matrices.peek().getPositionMatrix(), textVcp,
-                    TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
+                collector.submitText(
+                    matrices, -w / 2f, 0f, label.visualOrderText, false,
+                    Font.DisplayMode.SEE_THROUGH, FULL_LIGHT, textColor, 0, 0,
                 )
             } finally {
-                matrices.pop()
+                matrices.popPose()
             }
         } catch (_: Throwable) {}
 
@@ -480,7 +454,7 @@ object ReplayRenderer {
                 val hp = hs.displayHealth.coerceIn(0f, maxH)
                 val baseY = if (laid) 0.95 else if (s.pose == ReplayBuffer.POSE_SNEAK) 2.15 else 2.5
                 val hy = baseY + 0.35f
-                matrices.push()
+                matrices.pushPose()
                 try {
                     matrices.translate(s.x.toDouble(), (s.y + hy).toDouble(), s.z.toDouble())
                     val dx = (s.x + oxF) - camPos.x.toFloat()
@@ -488,29 +462,27 @@ object ReplayRenderer {
                     val dz = (s.z + ozF) - camPos.z.toFloat()
                     val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                     val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
-                    if (camRot != null) matrices.multiply(camRot)
+                    if (camRot != null) matrices.mulPose(Matrix4f().rotation(camRot))
                     matrices.scale(scale, -scale, scale)
                     val hpInt = (hp + 0.5f).toInt()
                     val maxInt = (maxH + 0.5f).toInt()
-                    val hpLabel = Text.literal("§c$hpInt§r/§f$maxInt")
-                    val w = tr.getWidth(hpLabel)
-                    tr.draw(
-                        hpLabel, -w / 2f, 0f, WHITE, false,
-                        matrices.peek().getPositionMatrix(), textVcp,
-                        TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
+                    val hpLabel = Component.literal("§c$hpInt§r/§f$maxInt")
+                    val w = tr.width(hpLabel)
+                    collector.submitText(
+                        matrices, -w / 2f, 0f, hpLabel.visualOrderText, false,
+                        Font.DisplayMode.SEE_THROUGH, FULL_LIGHT, WHITE, 0, 0,
                     )
                     if (tick - hs.dmgTick in 0..40 && hs.dmgAmount > 0f) {
                         val dmgInt = (hs.dmgAmount + 0.5f).toInt()
-                        val popup = Text.literal("§c-$dmgInt")
-                        val pw = tr.getWidth(popup)
-                        tr.draw(
-                            popup, w / 2f + 2f, 0f, RED_COLOR, false,
-                            matrices.peek().getPositionMatrix(), textVcp,
-                            TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
+                        val popup = Component.literal("§c-$dmgInt")
+                        val pw = tr.width(popup)
+                        collector.submitText(
+                            matrices, w / 2f + 2f, 0f, popup.visualOrderText, false,
+                            Font.DisplayMode.SEE_THROUGH, FULL_LIGHT, RED_COLOR, 0, 0,
                         )
                     }
                 } finally {
-                    matrices.pop()
+                    matrices.popPose()
                 }
             } catch (_: Throwable) {}
         }
@@ -520,10 +492,10 @@ object ReplayRenderer {
         //     fired is visible on the ghost itself ---
         if (alertLabel != null) {
             try {
-                val alert = Text.literal("§c⚠ §f$alertLabel")
+                val alert = Component.literal("§c⚠ §f$alertLabel")
                 val baseY = if (laid) 0.95 else if (s.pose == ReplayBuffer.POSE_SNEAK) 2.15 else 2.5
                 val ay = baseY + if (healthOn) 0.7f else 0.35f
-                matrices.push()
+                matrices.pushPose()
                 try {
                     matrices.translate(s.x.toDouble(), (s.y + ay).toDouble(), s.z.toDouble())
                     val dx = (s.x + oxF) - camPos.x.toFloat()
@@ -531,16 +503,15 @@ object ReplayRenderer {
                     val dz = (s.z + ozF) - camPos.z.toFloat()
                     val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                     val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
-                    if (camRot != null) matrices.multiply(camRot)
+                    if (camRot != null) matrices.mulPose(Matrix4f().rotation(camRot))
                     matrices.scale(scale, -scale, scale)
-                    val w = tr.getWidth(alert)
-                    tr.draw(
-                        alert, -w / 2f, 0f, RED_COLOR, false,
-                        matrices.peek().getPositionMatrix(), textVcp,
-                        TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
+                    val w = tr.width(alert)
+                    collector.submitText(
+                        matrices, -w / 2f, 0f, alert.visualOrderText, false,
+                        Font.DisplayMode.SEE_THROUGH, FULL_LIGHT, RED_COLOR, 0, 0,
                     )
                 } finally {
-                    matrices.pop()
+                    matrices.popPose()
                 }
             } catch (_: Throwable) {}
         }
@@ -549,12 +520,12 @@ object ReplayRenderer {
     /**
      * Real-player-model path (gated by [IustitiaConfig.replayPlayerModels], default on).
      *
-     * Drives vanilla's [PlayerEntityRenderer] model with a hand-built [net.minecraft.client.render.entity.state.PlayerEntityRenderState]
+     * Drives vanilla's [AvatarRenderer] model with a hand-built [net.minecraft.client.renderer.entity.state.AvatarRenderState]
      * and the player's REAL skin ([dev.iustitia.render.ReplaySkins.resolve] — a per-UUID cache that reads
-     * the tab-list [net.minecraft.client.network.PlayerListEntry] vanilla already keeps warm; Steve/Alex
+     * the tab-list [net.minecraft.client.multiplayer.PlayerInfo] vanilla already keeps warm; Steve/Alex
      * fallback for players not in the tab list), drawn via [net.minecraft.client.model.Model.render]
-     * straight onto the overlay's [VertexConsumerProvider]. This bypasses the 1.21.11
-     * `OrderedRenderCommandQueue` entity pipeline (which the world overlay context can't supply) by
+     * straight onto the overlay's [MultiBufferSource]. This bypasses the 1.21.11
+     * `SubmitNodeCollector` entity pipeline (which the world overlay context can't supply) by
      * going one level lower — the base `Model.render` still takes a plain `VertexConsumer`, exactly what
      * `ctx.consumers()` exposes (the same path the GUI skin renderer uses).
      *
@@ -573,38 +544,7 @@ object ReplayRenderer {
      * outline with this on, the skin/layer fetch is the path to recheck. Display-only: no detection.
      */
     @Volatile
-    private var playerRenderer: PlayerEntityRenderer<*>? = null
-
-    /**
-     * Dedicated `VertexConsumerProvider.Immediate` for ghost name tags + alert markers. Vanilla
-     * itself draws entity labels into a real `VertexConsumerProvider.Immediate`
-     * (`BufferBuilderStorage.getEntityVertexConsumers`, passed to `LabelCommandRenderer.render`) —
-     * NOT into the batched world consumer — so mirroring that with a private Immediate + an explicit
-     * [draw] is the vanilla-aligned path for world-space text.
-     *
-     * The text is BUFFERED at [drawGhosts] (AFTER_ENTITIES, matrices baked there) and FLUSHED at
-     * [WorldRenderEvents.END_MAIN] — AFTER `ctx.consumers()` flushes the chunk-world blocks (MODERN)
-     * + ghost models (every mode) — so the tags draw on top of the geometry behind them instead of
-     * being overdrawn by the later opaque flush. (The earlier "nametags 100% invisible" bug was the
-     * billboard, not the consumer — see [drawGhosts]; the dedicated Immediate is kept because it's the
-     * proven-correct text path.)
-     *
-     * Reused across frames (one long-lived [BufferAllocator], like vanilla's `Tessellator`); [draw]
-     * resets the buffers each frame. Constructed lazily on first use. Fail-open: if construction
-     * throws the caller falls back to the world consumer so a bad allocator never crashes the frame.
-     * Render-thread only (drawGhosts + END_MAIN are single-threaded on the render thread).
-     */
-    private var textVcpAlloc: BufferAllocator? = null
-    private var textVcpImmediate: VertexConsumerProvider.Immediate? = null
-    private fun textVcp(): VertexConsumerProvider.Immediate? = try {
-        textVcpImmediate ?: run {
-            val alloc = BufferAllocator(786432)
-            val v = VertexConsumerProvider.immediate(alloc)
-            textVcpAlloc = alloc
-            textVcpImmediate = v
-            v
-        }
-    } catch (_: Throwable) { null }
+    private var playerRenderer: AvatarRenderer<*>? = null
 
     /**
      * Per-ghost rolling walk-animation state. Vanilla drives a player's legs from a `LimbAnimator`
@@ -649,7 +589,7 @@ object ReplayRenderer {
     private val healthState = ConcurrentHashMap<java.util.UUID, HealthState>()
 
     // v8 ghost-equipment: registry-id-string → ItemStack cache. The same few items repeat across
-    // ticks + players, so memoizing avoids re-resolving `Registries.ITEM.get` every ghost every
+    // ticks + players, so memoizing avoids re-resolving `BuiltInRegistries.ITEM.get` every ghost every
     // frame. Render-thread only (drawModel is single-threaded); bounded by the (small) set of
     // distinct item ids ever observed in a clip. ItemStack.EMPTY for blank / unknown / AIR ids.
     private val stackCache = HashMap<String, ItemStack>()
@@ -657,7 +597,7 @@ object ReplayRenderer {
         if (id.isBlank()) return ItemStack.EMPTY
         stackCache[id]?.let { return it }
         val stack = try {
-            val item = Registries.ITEM.get(Identifier.of(id))
+            val item = BuiltInRegistries.ITEM.getValue(Identifier.parse(id))
             if (item === Items.AIR) ItemStack.EMPTY else ItemStack(item)
         } catch (_: Throwable) { ItemStack.EMPTY }
         stackCache[id] = stack
@@ -672,9 +612,8 @@ object ReplayRenderer {
     private var cachedAlertLabels: Map<java.util.UUID, String> = emptyMap()
 
     private fun drawModel(
-        matrices: MatrixStack,
-        vcp: VertexConsumerProvider,
-        queue: OrderedRenderCommandQueue?,
+        matrices: PoseStack,
+        collector: SubmitNodeCollector,
         s: ReplayBuffer.PlayerSnap,
         tick: Int,
     ): Boolean {
@@ -682,12 +621,12 @@ object ReplayRenderer {
         // v8 ghost equipment toggle (held items + armor). Additive, default on. When off (or the live
         // entity-pass queue is unavailable) the ghost renders skin-only — today's behavior.
         val equipOn = try { ConfigManager.config.clipGhostEquipment } catch (_: Throwable) { false }
-        val mc = MinecraftClient.getInstance()
+        val mc = Minecraft.getInstance()
         val player = mc.player ?: return false
         // resolve + cache the player renderer (stable per entity type; doesn't change with world)
         val renderer = playerRenderer ?: try {
             @Suppress("UNCHECKED_CAST")
-            (mc.getEntityRenderDispatcher().getRenderer(player) as? PlayerEntityRenderer<*>).also { playerRenderer = it }
+            (mc.getEntityRenderDispatcher().getRenderer(player) as? AvatarRenderer<*>).also { playerRenderer = it }
         } catch (_: Throwable) { null }
         if (renderer == null) return false
         val model = try { renderer.model } catch (_: Throwable) { return false }
@@ -695,21 +634,21 @@ object ReplayRenderer {
         val skin = try { ReplaySkins.resolve(s.uuid()) } catch (_: Throwable) { return false }
         // Per-ghost walk state (rolling position-delta stride).
         val ws = walkState.computeIfAbsent(s.uuid()) { WalkState() }
-        // A FRESH PlayerEntityRenderState per ghost per frame, deliberately — NOT the per-type reuse
-        // the entity ghosts below use, and the difference is not stylistic. This path submits the skin
+        // A FRESH AvatarRenderState per ghost per frame, deliberately — the entity ghosts below do
+        // the same now, for the same reason. This path submits the skin
         // through the deferred entity-pass queue at the bottom of this method, and
-        // `OrderedRenderCommandQueueImpl.ModelCommand` is a record that holds the render state and is
+        // `SubmitNodeStorage.ModelCommand` is a record that holds the render state and is
         // drained after the whole ghost loop. One shared state per type would therefore be overwritten
         // by the next same-type ghost long before the first one's geometry was drawn — every player
         // ghost would render with the last player's pose. (`createRenderState()` is also the cheap
         // half: the profiler puts all of drawModel at ~0.4% of a frame.) Fail-open → box.
-        val state: PlayerEntityRenderState = try { renderer.createRenderState() } catch (_: Throwable) { return false }
+        val state: AvatarRenderState = try { renderer.createRenderState() } catch (_: Throwable) { return false }
 
         // --- populate the render state so the ghost poses, faces, walks and swings like the live
         //     player did. Field-by-field rationale (verified by disassembling vanilla 1.21.11):
         //       skin/baseScale/ageScale/visibility/light/invisible — basic posed-skin setup.
         //       hurt=false / deathTime=0 / shaking=false — explicitly suppress every damage channel.
-        //         The overlay passed to Model.render is OverlayTexture.DEFAULT_UV (the transparent
+        //         The overlay passed to Model.render is OverlayTexture.NO_OVERLAY (the transparent
         //         no-overlay row), NOT 0 — see the inline note at the render call below for why 0 was
         //         the constant-red bug. Pinning hurt/deathTime/shaking false is belt-and-suspenders.
         //       bodyYaw — setAngles does NOT read bodyYaw; the body-facing rotation lives in
@@ -725,25 +664,24 @@ object ReplayRenderer {
         //         so the base setAngles leg math animates with no extra setup).
         //       handSwingProgress / leftArmPose / rightArmPose / mainArm / preferredArm — arm-swing
         //         (attack) animation; handSwingTicks captured per snap, arm poses EMPTY = natural hang. ---
-        state.skinTextures = skin
-        state.baseScale = 1f
+        state.skin = skin
+        state.scale = 1f
         state.ageScale = 1f
-        state.hatVisible = true; state.jacketVisible = true
-        state.leftPantsLegVisible = true; state.rightPantsLegVisible = true
-        state.leftSleeveVisible = true; state.rightSleeveVisible = true
-        state.capeVisible = true
-        state.light = FULL_LIGHT
-        state.invisible = false
+        state.showHat = true; state.showJacket = true
+        state.showLeftPants = true; state.showRightPants = true
+        state.showLeftSleeve = true; state.showRightSleeve = true
+        state.showCape = true
+        state.lightCoords = FULL_LIGHT
+        state.isInvisible = false
         // v7 hurt red-flash: drive the vanilla hurt overlay from the recorded hurtTime (0 = not
         // recently hit). LivingEntityRenderer.getOverlay reads state.hurt → returns the red hurt-row
         // overlay UV when true, DEFAULT_UV when false (identical to the pre-v7 fixed DEFAULT_UV).
-        state.hurt = s.hurtTime > 0
+        state.hasRedOverlay = s.hurtTime > 0
         state.deathTime = 0f
-        state.shaking = false
-        state.bodyYaw = s.yaw
-        state.relativeHeadYaw = 0f
-        state.pitch = s.pitch
-        state.age = tick.toFloat()
+        state.bodyRot = s.yaw
+        state.yRot = s.yaw
+        state.xRot = s.pitch
+        state.ageInTicks = tick.toFloat()
         // Walk animation from the per-uuid rolling position delta (see WalkState). The advance is
         // gated on the PLAYHEAD FRAME advancing (tick - lastTick == 1), NOT on every render frame:
         // the playhead moves one frame per replay tick at 1× (slower at 0.5/0.25×), so the legs swing
@@ -776,63 +714,61 @@ object ReplayRenderer {
             }
             // tickJump == 0: same playhead frame redrawn → hold the pose (no per-frame leg pump).
         }
-        state.limbSwingAmplitude = ws.amp
-        state.limbSwingAnimationProgress = ws.phase
-        // Arm swing (attack): handSwingTicks polled from the live entity + captured per snap.
-        // progress = ticks/6 ≈ vanilla getHandSwingProgress over the ~6-tick swing. Arm poses EMPTY
-        // so the arms hang at the sides and swing via handSwingProgress when the player attacked.
-        state.handSwingProgress = (s.swingTicks / 6f).coerceIn(0f, 1f)
-        state.leftArmPose = BipedEntityModel.ArmPose.EMPTY
-        state.rightArmPose = BipedEntityModel.ArmPose.EMPTY
-        state.mainArm = Arm.RIGHT
-        state.preferredArm = Arm.RIGHT
+        state.walkAnimationSpeed = ws.amp
+        state.walkAnimationPos = ws.phase
+        // HumanoidArm swing (attack): handSwingTicks polled from the live entity + captured per snap.
+        // swingAnimation = ticks/6 ≈ vanilla getHandSwingProgress over the ~6-tick swing. HumanoidArm
+        // poses EMPTY so the arms hang at the sides and swing when the player attacked.
+        state.swingAnimation = (s.swingTicks / 6f).coerceIn(0f, 1f)
+        state.leftArmPose = HumanoidModel.ArmPose.EMPTY
+        state.rightArmPose = HumanoidModel.ArmPose.EMPTY
+        state.mainArm = HumanoidArm.RIGHT
         when (s.pose) {
-            ReplayBuffer.POSE_SNEAK -> { state.isInSneakingPose = true; state.pose = EntityPose.CROUCHING }
-            ReplayBuffer.POSE_GLIDE -> { state.isGliding = true; state.pose = EntityPose.GLIDING }
-            ReplayBuffer.POSE_SWIM -> { state.isSwimming = true; state.pose = EntityPose.SWIMMING }
-            ReplayBuffer.POSE_RIPTIDE -> { state.usingRiptide = true; state.pose = EntityPose.SPIN_ATTACK }
-            else -> state.pose = EntityPose.STANDING
+            ReplayBuffer.POSE_SNEAK -> state.isCrouching = true
+            ReplayBuffer.POSE_GLIDE -> state.isFallFlying = true
+            ReplayBuffer.POSE_SWIM -> state.isVisuallySwimming = true
+            ReplayBuffer.POSE_RIPTIDE -> state.isAutoSpinAttack = true
+            else -> {}
         }
         // pose the model limbs from the state (head pitch, body/limb walk, arm swing, sneak/glide).
-        try { model.setAngles(state) } catch (_: Throwable) { return false }
+        try { model.setupAnim(state) } catch (_: Throwable) { return false }
 
         // v8 ghost equipment: reconstruct the 6 recorded stacks (registry-id strings → ItemStack) and
         // populate the render state so the armor + held-item feature renderers draw them. Gated on the
-        // config toggle + a live OrderedRenderCommandQueue (features submit through the queue). Each
+        // config toggle + a live SubmitNodeCollector (features submit through the queue). Each
         // step fail-open — a bad id / a special-item NPE degrades to an empty slot, never breaks the
         // frame. `clearAndUpdate` populates the FINAL rightHandItemState/leftHandItemState in place
-        // (they're `final ItemRenderState`, not reassignable) with a no-entity HeldItemContext.
-        if (equipOn && queue != null) {
+        // (they're `final ItemStackRenderState`, not reassignable) with a no-entity ItemOwner.
+        if (equipOn) {
             try {
-                state.equippedHeadStack = stackFor(s.head)
-                state.equippedChestStack = stackFor(s.chest)
-                state.equippedLegsStack = stackFor(s.legs)
-                state.equippedFeetStack = stackFor(s.feet)
-                state.rightHandItem = stackFor(s.mainHand)
-                state.leftHandItem = stackFor(s.offHand)
+                state.headEquipment = stackFor(s.head)
+                state.chestEquipment = stackFor(s.chest)
+                state.legsEquipment = stackFor(s.legs)
+                state.feetEquipment = stackFor(s.feet)
+                state.rightHandItemStack = stackFor(s.mainHand)
+                state.leftHandItemStack = stackFor(s.offHand)
                 val imm = (renderer as? LivingEntityRendererAccessor)?.iustitia_getItemModelManager()
-                val world = mc.world
+                val world = mc.level
                 if (imm != null && world != null) {
-                    // A no-entity HeldItemContext: the ghost has no live LivingEntity, so the static
+                    // A no-entity ItemOwner: the ghost has no live LivingEntity, so the static
                     // ArmedEntityRenderState.updateRenderState path (which requires one) is bypassed.
                     // Most item models don't touch getEntity(); a few special ones (trident/spyglass/
                     // custom) might NPE → contained by the per-feature try/catch at the render call.
-                    val itemCtx = GhostHeldItemContext(world, Vec3d(s.x.toDouble(), s.y.toDouble(), s.z.toDouble()), s.yaw)
+                    val itemCtx = GhostHeldItemContext(world, Vec3(s.x.toDouble(), s.y.toDouble(), s.z.toDouble()), s.yaw)
                     try {
-                        imm.clearAndUpdate(state.rightHandItemState, state.rightHandItem, ItemDisplayContext.THIRD_PERSON_RIGHT_HAND, world, itemCtx, FULL_LIGHT)
+                        imm.updateForTopItem(state.rightHandItemState, state.rightHandItemStack, ItemDisplayContext.THIRD_PERSON_RIGHT_HAND, world, itemCtx, FULL_LIGHT)
                     } catch (_: Throwable) {}
                     try {
-                        imm.clearAndUpdate(state.leftHandItemState, state.leftHandItem, ItemDisplayContext.THIRD_PERSON_LEFT_HAND, world, itemCtx, FULL_LIGHT)
+                        imm.updateForTopItem(state.leftHandItemState, state.leftHandItemStack, ItemDisplayContext.THIRD_PERSON_LEFT_HAND, world, itemCtx, FULL_LIGHT)
                     } catch (_: Throwable) {}
                 }
             } catch (_: Throwable) {}
         }
 
         val texture = try { skin.body().texturePath() } catch (_: Throwable) { return false }
-        val layer = try { model.getLayer(texture) ?: return false } catch (_: Throwable) { return false }
-        val vc = try { vcp.getBuffer(layer) } catch (_: Throwable) { return false }
+        val layer = try { model.renderType(texture) ?: return false } catch (_: Throwable) { return false }
 
-        matrices.push()
+        matrices.pushPose()
         try {
             matrices.translate(s.x.toDouble(), s.y.toDouble(), s.z.toDouble())
             // Body-facing rotation — replicates vanilla LivingEntityRenderer.setupTransforms for a
@@ -841,14 +777,14 @@ object ReplayRenderer {
             // flip. Without this the body never rotates to the player's yaw (setAngles doesn't read
             // bodyYaw) → the ghost always faced south regardless of where the player looked (the
             // "camera not logged" bug). Runtime-verifiable sign; fail-open per ghost.
-            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - s.yaw))
+            matrices.mulPose(Matrix4f().rotation(Axis.YP.rotationDegrees(180f - s.yaw)))
             // Replicate vanilla LivingEntityRenderer.render EXACTLY from here: entity-model vertices
             // are ALREADY in block units (ModelPart$Vertex divides pixel coords by 16 at build time),
             // so there is NO /16 scale; scale(-1,-1,1) flips the model out of its +Y-down definition
             // space; translate(0,-1.501,0) seats the feet at the snap origin (vanilla's constants).
             matrices.scale(-1f, -1f, 1f)
             matrices.translate(0f, -1.501f, 0f)
-            // OverlayTexture: the hurt red-flash. Vanilla's LivingEntityRenderer.getOverlay(state,
+            // OverlayTexture: the hurt red-flash. Vanilla's LivingEntityRenderer.getOverlayCoords(state,
             // partial) = packUv(getU(partial), getV(state.hurt)) — getV(true) selects the translucent
             // RED hurt row (rows 0-7), getV(false) returns the transparent DEFAULT row. We set
             // state.hurt = (hurtTime > 0) above, so a recorded hit tints that ghost red for ~10 ticks
@@ -857,68 +793,60 @@ object ReplayRenderer {
             // hurt sparkle isn't used for the red tint, which lives in V); partialTick=0 is fine since
             // the playhead advances per-tick. Fail-open to DEFAULT_UV.
             val overlay = if (s.hurtTime > 0)
-                try { LivingEntityRenderer.getOverlay(state, 0f) } catch (_: Throwable) { OverlayTexture.DEFAULT_UV }
-            else OverlayTexture.DEFAULT_UV
-            if (queue != null) {
-                // Submit the ghost skin through the live entity-pass queue (proper z-order with the
-                // captured world + the feature-submitted armor). The trailing no-op defaults
-                // (mixColor=-1, sprite=null, outlineColor=0, crumbling=null) are vanilla's own values
-                // for a non-spectator / non-mix entity (verified from LivingEntityRenderer.render).
-                try {
-                    queue.submitModel(model, state, matrices, layer, state.light, overlay, -1, null, 0, null)
-                } catch (_: Throwable) {
-                    model.render(matrices, vc, FULL_LIGHT, overlay)
-                }
-                // v8 equipment features: armor + held items. Filter to the two equipment features the
-                // user asked for (PlayerHeldItemFeatureRenderer extends HeldItemFeatureRenderer, so the
-                // base `is`-check covers it). Per-feature try/catch contains any NPE from a special
-                // item model (trident/spyglass/custom) or an unset state field — one bad feature skips,
-                // the rest + the skin survive.
-                if (equipOn) {
-                    val feats = (renderer as? LivingEntityRendererAccessor)?.iustitia_getFeatures()
-                    if (feats != null) {
-                        for (f in feats) {
-                            if (f !is ArmorFeatureRenderer<*, *, *> && f !is HeldItemFeatureRenderer<*, *>) continue
-                            try {
-                                @Suppress("UNCHECKED_CAST")
-                                (f as FeatureRenderer<PlayerEntityRenderState, *>).render(
-                                    matrices, queue, state.light, state, state.relativeHeadYaw, state.pitch)
-                            } catch (_: Throwable) {}
-                        }
+                try { LivingEntityRenderer.getOverlayCoords(state, 0f) } catch (_: Throwable) { OverlayTexture.NO_OVERLAY }
+            else OverlayTexture.NO_OVERLAY
+            // Submit the ghost skin into the frame's collector (proper z-order with the captured
+            // world + the feature-submitted armor). The trailing no-op defaults (color=-1, sprite=null,
+            // outlineColor=0) are vanilla's own values for a non-spectator / non-mix entity.
+            try {
+                collector.submitModel(model, state, matrices, layer, FULL_LIGHT, overlay, -1, null, 0)
+            } catch (_: Throwable) {}
+            // v8 equipment features: armor + held items. Filter to the two equipment features the
+            // user asked for (PlayerHeldItemFeatureRenderer extends ItemInHandLayer, so the
+            // base `is`-check covers it). Per-feature try/catch contains any NPE from a special
+            // item model (trident/spyglass/custom) or an unset state field — one bad feature skips,
+            // the rest + the skin survive.
+            if (equipOn) {
+                val feats = (renderer as? LivingEntityRendererAccessor)?.iustitia_getFeatures()
+                if (feats != null) {
+                    for (f in feats) {
+                        if (f !is HumanoidArmorLayer<*, *, *> && f !is ItemInHandLayer<*, *>) continue
+                        try {
+                            @Suppress("UNCHECKED_CAST")
+                            (f as RenderLayer<AvatarRenderState, *>).submit(
+                                matrices, collector, FULL_LIGHT, state, state.yRot, state.xRot)
+                        } catch (_: Throwable) {}
                     }
                 }
-            } else {
-                // No live queue (Fabric didn't supply one this pass) → the proven Immediate skin path.
-                model.render(matrices, vc, FULL_LIGHT, overlay)
             }
         } catch (_: Throwable) {
             return false
         } finally {
-            matrices.pop()
+            matrices.popPose()
         }
         return true
     }
 
-    /** Draw an axis-aligned box outline in the CURRENT matrix frame (offset 0; caller positions). */
+    /** Submit an axis-aligned box outline in the CURRENT matrix frame (offset 0; caller positions). */
     private fun box(
-        matrices: MatrixStack,
-        lines: net.minecraft.client.render.VertexConsumer,
+        matrices: PoseStack,
+        collector: SubmitNodeCollector,
         minx: Double, miny: Double, minz: Double,
         maxx: Double, maxy: Double, maxz: Double,
         color: Int, width: Float,
     ) {
-        val shape = VoxelShapes.cuboid(Box(minx, miny, minz, maxx, maxy, maxz))
-        VertexRendering.drawOutline(matrices, lines, shape, 0.0, 0.0, 0.0, color, width)
+        val shape = Shapes.box(minx, miny, minz, maxx, maxy, maxz)
+        collector.submitShapeOutline(matrices, shape, RenderTypes.LINES, color, width, false)
     }
 
     // ---- v13 non-player entity ghosts (SnapClip port) ------------------------------------------------
     //
     // A captured mob/animal is drawn through the vanilla entity renderer resolved from its captured
-    // registry type (`Registries.ENTITY_TYPE`), driven by a render state built from its prototype
+    // registry type (`BuiltInRegistries.ENTITY_TYPE`), driven by a render state built from its prototype
     // entity (which is what gives the model its correct dimensions/parts) plus the snap's pose/yaw/
     // health. Boats/minecarts have no model of their own — their renderer submits into an
-    // OrderedRenderCommandQueue instead — so they go through [ImmediateRenderQueue], which emits that
-    // work straight into the overlay's [VertexConsumerProvider]. Both paths are display-only and
+    // SubmitNodeCollector instead — so they go through [ImmediateRenderQueue], which emits that
+    // work straight into the overlay's [MultiBufferSource]. Both paths are display-only and
     // fail-open per entity; the renderer/prototype caches are keyed by type id so a scene with 20
     // zombies resolves the renderer once. Runtime-only-verifiable (the model transforms + the
     // non-living submit path can only be confirmed in a live client).
@@ -926,31 +854,19 @@ object ReplayRenderer {
     /** typeId → vanilla living renderer (null when the type has no living renderer / resolution failed). */
     private val entityRendererCache = ConcurrentHashMap<String, LivingEntityRenderer<*, *, *>?>()
     /** typeId → a fabricated prototype living entity (used to seed `updateRenderState`). */
-    private val entityPrototypeCache = ConcurrentHashMap<String, net.minecraft.entity.LivingEntity?>()
+    private val entityPrototypeCache = ConcurrentHashMap<String, net.minecraft.world.entity.LivingEntity?>()
     /** typeId → vanilla non-living renderer (boats/minecarts). */
     private val nonLivingRendererCache = ConcurrentHashMap<String, EntityRenderer<*, *>?>()
     /** typeId → a fabricated prototype non-living entity. */
     private val nonLivingPrototypeCache = ConcurrentHashMap<String, Entity?>()
 
-    /**
-     * typeId to the ONE render state that type's ghost is drawn with, every frame.
-     *
-     * Both entity-ghost paths used to call `createRenderState()` per ghost per frame, building a fresh
-     * object solely to overwrite all of it and hand it to a consumer that reads it synchronously.
-     * Reuse is sound here because the state is keyed per TYPE (so the concrete state class always
-     * matches the renderer that fills it), every field the draw reads is re-derived each frame by
-     * `updateRenderState` from the cached prototype plus the explicit overwrites below, and nothing
-     * retains the reference past the call -- [ImmediateRenderQueue] writes its vertices immediately,
-     * and the living path renders straight into a vertex buffer.
-     *
-     * The player path must NOT do this, and its own comment no longer claims otherwise: its state is
-     * captured by the deferred `queue.submitModel` command and drained after the ghost loop. Cleared in
-     * [clearGhostCaches] so a replay in another world cannot reuse a state seeded from the previous
-     * world's prototype.
-     */
-    private val entityStateCache = ConcurrentHashMap<String, LivingEntityRenderState>()
-    /** typeId to the reused render state for a non-living ghost (boats/minecarts); see [entityStateCache]. */
-    private val nonLivingStateCache = ConcurrentHashMap<String, EntityRenderState>()
+    // Render states are allocated FRESH per ghost per frame on EVERY ghost path — there is deliberately
+    // no per-type state cache here. All three paths (players, living mobs, boats/minecarts) hand their
+    // state to a DEFERRED submission (`SubmitNodeStorage.ModelCommand` is a record holding the render
+    // state, drained only after the whole ghost loop), so one state shared per type would be
+    // overwritten by the next same-type ghost long before the first one's geometry was drawn — every
+    // same-type ghost would render with the last one's pose. (`createRenderState()` is the cheap half:
+    // the profiler puts all of drawModel at ~0.4% of a frame.) Fail-open everywhere, as before.
 
     /** Resolve (and cache) the vanilla living renderer for a captured entity type id, or null. */
     private fun entityRendererFor(typeId: String): LivingEntityRenderer<*, *, *>? {
@@ -961,13 +877,13 @@ object ReplayRenderer {
     }
 
     private fun lookupEntityRenderer(typeId: String): LivingEntityRenderer<*, *, *>? = try {
-        val mc = MinecraftClient.getInstance()
-        val world = mc.world ?: return null
-        val id = Identifier.of(typeId)
-        if (!Registries.ENTITY_TYPE.containsId(id)) return null
-        val type = Registries.ENTITY_TYPE.get(id)
-        val proto = type.create(world, SpawnReason.COMMAND) ?: return null
-        if (proto !is net.minecraft.entity.LivingEntity) return null
+        val mc = Minecraft.getInstance()
+        val world = mc.level ?: return null
+        val id = Identifier.parse(typeId)
+        if (!BuiltInRegistries.ENTITY_TYPE.containsKey(id)) return null
+        val type = BuiltInRegistries.ENTITY_TYPE.getValue(id)
+        val proto = type.create(world, EntitySpawnReason.COMMAND) ?: return null
+        if (proto !is net.minecraft.world.entity.LivingEntity) return null
         entityPrototypeCache[typeId] = proto
         val renderer = mc.getEntityRenderDispatcher().getRenderer(proto)
         renderer as? LivingEntityRenderer<*, *, *>
@@ -982,13 +898,13 @@ object ReplayRenderer {
     }
 
     private fun lookupNonLivingRenderer(typeId: String): EntityRenderer<*, *>? = try {
-        val mc = MinecraftClient.getInstance()
-        val world = mc.world ?: return null
-        val id = Identifier.of(typeId)
-        if (!Registries.ENTITY_TYPE.containsId(id)) return null
-        val type = Registries.ENTITY_TYPE.get(id)
-        val proto = type.create(world, SpawnReason.COMMAND) ?: return null
-        if (proto is net.minecraft.entity.LivingEntity) return null
+        val mc = Minecraft.getInstance()
+        val world = mc.level ?: return null
+        val id = Identifier.parse(typeId)
+        if (!BuiltInRegistries.ENTITY_TYPE.containsKey(id)) return null
+        val type = BuiltInRegistries.ENTITY_TYPE.getValue(id)
+        val proto = type.create(world, EntitySpawnReason.COMMAND) ?: return null
+        if (proto is net.minecraft.world.entity.LivingEntity) return null
         nonLivingPrototypeCache[typeId] = proto
         mc.getEntityRenderDispatcher().getRenderer(proto)
     } catch (_: Throwable) { null }
@@ -1001,11 +917,11 @@ object ReplayRenderer {
      * Fail-open (returns quietly on any missing piece).
      */
     private fun drawEntityGhost(
-        matrices: MatrixStack,
-        vcp: VertexConsumerProvider,
+        matrices: PoseStack,
+        collector: SubmitNodeCollector,
         e: ReplayBuffer.EntitySnap,
-        camPos: Vec3d,
-        offset: Vec3d,
+        camPos: Vec3,
+        offset: Vec3,
         tick: Int,
     ) {
         val ex = e.x.toDouble() + offset.x
@@ -1018,11 +934,12 @@ object ReplayRenderer {
 
         val cached = entityRendererFor(e.typeId) ?: return
         @Suppress("UNCHECKED_CAST")
-        val r = cached as LivingEntityRenderer<net.minecraft.entity.LivingEntity, LivingEntityRenderState, EntityModel<LivingEntityRenderState>>
-        // ONE state per entity type, reused every frame (see [entityStateCache] for why that is safe
-        // here and not on the player path). Fail-open → skip this ghost.
+        val r = cached as LivingEntityRenderer<net.minecraft.world.entity.LivingEntity, LivingEntityRenderState, EntityModel<LivingEntityRenderState>>
+        // A FRESH state per ghost per frame: the submission below is deferred (drained after the whole
+        // ghost loop), so a per-type shared state would show every same-type mob with the last one's
+        // pose. Same reasoning as the player path above. Fail-open → skip this ghost.
         val state: LivingEntityRenderState = try {
-            entityStateCache.getOrPut(e.typeId) { r.createRenderState() }
+            r.createRenderState()
         } catch (_: Throwable) { return }
         val model: EntityModel<LivingEntityRenderState> = try { r.model } catch (_: Throwable) { return }
 
@@ -1030,32 +947,24 @@ object ReplayRenderer {
         if (proto != null) {
             try {
                 @Suppress("UNCHECKED_CAST")
-                (r as LivingEntityRenderer<net.minecraft.entity.LivingEntity, LivingEntityRenderState, *>)
-                    .updateRenderState(proto, state, 0f)
+                (r as LivingEntityRenderer<net.minecraft.world.entity.LivingEntity, LivingEntityRenderState, *>)
+                    .extractRenderState(proto, state, 0f)
             } catch (_: Throwable) {
             }
         }
 
-        state.baseScale = 1f
+        state.scale = 1f
         state.ageScale = 1f
-        state.light = FULL_LIGHT
-        state.invisible = false
-        state.hurt = e.hurtTime > 0
+        state.lightCoords = FULL_LIGHT
+        state.isInvisible = false
+        state.hasRedOverlay = e.hurtTime > 0
         state.deathTime = 0f
-        state.shaking = false
-        state.baby = false
-        state.bodyYaw = e.bodyYaw
-        state.relativeHeadYaw = net.minecraft.util.math.MathHelper.wrapDegrees(e.headYaw - e.bodyYaw)
-        state.pitch = e.pitch
-        state.age = tick.toFloat()
-        state.usingRiptide = (e.pose == ReplayBuffer.POSE_RIPTIDE)
-        when (e.pose) {
-            ReplayBuffer.POSE_SNEAK -> state.pose = EntityPose.CROUCHING
-            ReplayBuffer.POSE_GLIDE -> state.pose = EntityPose.GLIDING
-            ReplayBuffer.POSE_SWIM -> state.pose = EntityPose.SWIMMING
-            ReplayBuffer.POSE_RIPTIDE -> state.pose = EntityPose.SPIN_ATTACK
-            else -> state.pose = EntityPose.STANDING
-        }
+        state.isBaby = false
+        state.bodyRot = e.bodyYaw
+        state.yRot = e.headYaw
+        state.xRot = e.pitch
+        state.ageInTicks = tick.toFloat()
+        state.isAutoSpinAttack = (e.pose == ReplayBuffer.POSE_RIPTIDE)
 
         // Movement-derived limb swing (no entity to tick a LimbAnimator): distance between consecutive
         // snaps → amplitude, integrated into phase. Reuses the players' [WalkState] keyed by uuid (a mob
@@ -1078,44 +987,44 @@ object ReplayRenderer {
                 ws.lastX = e.x; ws.lastZ = e.z; ws.lastTick = tick; ws.lastTickDist = 0f; ws.amp = 0f
             }
         }
-        state.limbSwingAmplitude = ws.amp
-        state.limbSwingAnimationProgress = ws.phase
+        state.walkAnimationSpeed = ws.amp
+        state.walkAnimationPos = ws.phase
 
-        try { model.setAngles(state) } catch (_: Throwable) { return }
-        val texture = try { r.getTexture(state) } catch (_: Throwable) { return }
-        val layer = try { model.getLayer(texture) ?: return } catch (_: Throwable) { return }
-        val vc = try { vcp.getBuffer(layer) } catch (_: Throwable) { return }
+        try { model.setupAnim(state) } catch (_: Throwable) { return }
+        val texture = try { r.getTextureLocation(state) } catch (_: Throwable) { return }
+        val layer = try { model.renderType(texture) ?: return } catch (_: Throwable) { return }
 
-        matrices.push()
+        matrices.pushPose()
         try {
             matrices.translate(e.x.toDouble(), e.y.toDouble(), e.z.toDouble())
-            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - e.bodyYaw))
+            matrices.mulPose(Matrix4f().rotation(Axis.YP.rotationDegrees(180f - e.bodyYaw)))
             matrices.scale(-1f, -1f, 1f)
             matrices.translate(0f, -1.501f, 0f)
             val overlay = if (e.hurtTime > 0)
-                try { LivingEntityRenderer.getOverlay(state, 0f) } catch (_: Throwable) { OverlayTexture.DEFAULT_UV }
-            else OverlayTexture.DEFAULT_UV
+                try { LivingEntityRenderer.getOverlayCoords(state, 0f) } catch (_: Throwable) { OverlayTexture.NO_OVERLAY }
+            else OverlayTexture.NO_OVERLAY
             try {
-                model.render(matrices, vc, FULL_LIGHT, overlay)
+                collector.submitModel(model, state, matrices, layer, FULL_LIGHT, overlay, -1, null, 0)
             } catch (_: Throwable) {
             }
         } catch (_: Throwable) {
         } finally {
-            matrices.pop()
+            matrices.popPose()
         }
     }
 
     /**
      * Draw one non-living entity ghost (boat/minecart) at its recorded pose via the vanilla entity
-     * renderer + [ImmediateRenderQueue] (which turns the renderer's deferred submissions into direct
-     * vertex writes). Culled beyond [ENTITY_RENDER_RADIUS]. Fail-open.
+     * renderer; `EntityRenderer.submit` forwards into the deferred collector. Culled beyond
+     * [ENTITY_RENDER_RADIUS]. Fail-open.
      */
     private fun drawNonLivingEntityGhost(
-        matrices: MatrixStack,
-        vcp: VertexConsumerProvider,
+        matrices: PoseStack,
+        collector: SubmitNodeCollector,
+        cameraState: CameraRenderState,
         e: ReplayBuffer.EntitySnap,
-        camPos: Vec3d,
-        offset: Vec3d,
+        camPos: Vec3,
+        offset: Vec3,
         tick: Int,
     ) {
         val ex = e.x.toDouble() + offset.x
@@ -1129,98 +1038,46 @@ object ReplayRenderer {
         val cached = nonLivingRendererFor(e.typeId) ?: return
         @Suppress("UNCHECKED_CAST")
         val r = cached as EntityRenderer<Entity, EntityRenderState>
-        // ONE state per entity type, reused every frame — same rationale as [entityStateCache], and
-        // even safer here: [ImmediateRenderQueue] drains each submission on the spot, so this state is
-        // never held past the call below.
+        // A FRESH state per ghost per frame — the submission below is deferred, so a per-type shared
+        // state would show every same-type ghost with the last one's pose (same as above).
         val state: EntityRenderState = try {
-            nonLivingStateCache.getOrPut(e.typeId) { r.createRenderState() }
+            r.createRenderState()
         } catch (_: Throwable) { return }
 
         val proto = nonLivingPrototypeCache[e.typeId]
         if (proto != null) {
-            try { r.updateRenderState(proto, state, 0f) } catch (_: Throwable) {}
+            try { r.extractRenderState(proto, state, 0f) } catch (_: Throwable) {}
         }
 
         state.x = e.x.toDouble()
         state.y = e.y.toDouble()
         state.z = e.z.toDouble()
-        state.light = FULL_LIGHT
-        state.age = tick.toFloat()
-        state.invisible = false
+        state.lightCoords = FULL_LIGHT
+        state.ageInTicks = tick.toFloat()
+        state.isInvisible = false
 
         when (state) {
-            is BoatEntityRenderState -> state.yaw = e.bodyYaw
-            is MinecartEntityRenderState -> {
-                state.lerpedYaw = e.bodyYaw
-                state.containedBlock = Blocks.AIR.defaultState
+            is BoatRenderState -> state.yRot = e.bodyYaw
+            is MinecartRenderState -> {
+                state.yRot = e.bodyYaw
+                // 26.3: the minecart display block lives in displayBlockModel (starts empty)
             }
         }
 
-        matrices.push()
+        matrices.pushPose()
         try {
             matrices.translate(e.x.toDouble(), e.y.toDouble(), e.z.toDouble())
-            r.render(state, matrices, immediateQueue(vcp), cameraState)
+            r.submit(state, matrices, collector, cameraState)
         } catch (_: Throwable) {
         } finally {
-            matrices.pop()
+            matrices.popPose()
         }
     }
 
-    /** Reused per-frame render helpers — render thread only (everything [drawGhosts] calls runs
-     *  there). The queue is re-bound to the frame's vcp each call; the [CameraRenderState] is
-     *  read-only input to entity renderers (vanilla shares one per frame across all entities too). */
-    private var reusedQueue: ImmediateRenderQueue? = null
-    private val cameraState = CameraRenderState()
-
-    /**
-     * Fill the shared [cameraState] for this frame, mirroring vanilla `GameRenderer.updateCameraState`
-     * field for field (disassembled on 1.21.11): `initialized` = `Camera.isReady`, `pos` =
-     * `Camera.getCameraPos`, `blockPos` = `Camera.getBlockPos`, `entityPos` = the focused entity's
-     * lerped position at that partial tick, `orientation` = a copy of `Camera.getRotation`.
-     *
-     * This object goes straight into vanilla renderer code we do not own -- every entity renderer's
-     * `render(..., CameraRenderState)` and its overrides -- so leaving it at the constructor's defaults
-     * (a camera at the world origin, identity rotation, `initialized` false) means any consumer that
-     * does read it computes against a camera that is not there. The one consumer visible in this path is
-     * [ImmediateRenderQueue.submitLabel], which multiplies the label matrix by `cameraState.orientation`
-     * exactly as vanilla's label pass does, to cancel the view rotation already on the AFTER_ENTITIES
-     * stack; with an identity quaternion that counter-rotation silently does nothing.
-     *
-     * Reachability, stated plainly so the next reader does not over-read this: `EntityRenderer` gates
-     * that label path on `state.displayName != null`, and nothing sets `displayName` (or `nameLabelPos`)
-     * on the fabricated entity states we build -- `EntityRenderer.updateRenderState` does not, the
-     * dispatcher does, and we bypass the dispatcher. So this is a WRONG INPUT being made right, not a
-     * bug you can see on screen today. It is worth the four field writes per frame because the renderers
-     * are free to read it, and the field would otherwise stay wrong forever.
-     *
-     * `orientation` is written in place rather than assigned a fresh copy: the constructor already
-     * allocates it and this runs every frame. It is still a copy -- vanilla allocates for exactly that
-     * reason, so the state never aliases the camera's own mutable quaternion.
-     *
-     * Fail-open, and ordered so the camera-independent fields land first: a camera whose focused entity
-     * is missing or throws still gets `pos`/`blockPos`/`orientation` refreshed.
-     */
-    private fun updateCameraState(camera: net.minecraft.client.render.Camera, tickDelta: Float) {
-        try {
-            cameraState.initialized = camera.isReady()
-            cameraState.pos = camera.getCameraPos()
-            cameraState.blockPos = camera.getBlockPos()
-            cameraState.orientation.set(camera.getRotation())
-            val focused = camera.getFocusedEntity() ?: return
-            cameraState.entityPos = focused.getLerpedPos(tickDelta)
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun immediateQueue(vcp: VertexConsumerProvider): ImmediateRenderQueue {
-        val q = reusedQueue
-        if (q != null) { q.bind(vcp); return q }
-        return ImmediateRenderQueue(vcp).also { reusedQueue = it }
-    }
 
     /** Drop every replay-scoped ghost cache (called from [ReplayState.stop]). Idempotent.
-     *  The renderer/prototype/state caches are the important ones: their entries are fabricated
-     *  against the `mc.world`/dispatcher live at LOOKUP time, so a clip played in a
+     *  The renderer/prototype caches are the important ones: their entries are fabricated
+     *  against the `mc.level`/dispatcher live at LOOKUP time, so a clip played in a
      *  different world/dimension after this replay would keep rendering ghosts with
      *  renderers + prototype entities bound to the previous world (the old version cleared
      *  only the walk/health per-uuid state and leaked all of these for the JVM's lifetime).
@@ -1234,8 +1091,6 @@ object ReplayRenderer {
             entityPrototypeCache.clear()
             nonLivingRendererCache.clear()
             nonLivingPrototypeCache.clear()
-            entityStateCache.clear()
-            nonLivingStateCache.clear()
             stackCache.clear()
             playerRenderer = null
             cachedAlertLabels = emptyMap()
@@ -1250,25 +1105,25 @@ object ReplayRenderer {
     }
 
     /** Bottom-center replay banner: focus name + speed + a progress bar. */
-    private fun renderHud(context: DrawContext) {
-        val mc = MinecraftClient.getInstance()
-        if (mc.currentScreen != null) return
-        val tr = mc.textRenderer ?: return
+    private fun renderHud(context: GuiGraphicsExtractor) {
+        val mc = Minecraft.getInstance()
+        if (mc.gui.screen() != null) return
+        val tr = mc.font ?: return
         val speed = ReplayState.currentSpeed()
         val paused = ReplayState.isPaused()
         val focus = ReplayState.focusName() ?: "scene"
         val pauseTxt = if (paused) "§e⏸ " else ""
-        val line = Text.literal("§8[§diustitia§8] §6▶ §fReplay §e$focus §7$pauseTxt§7${NumFmt.d(digits = 2, v = speed)}×")
+        val line = Component.literal("§8[§diustitia§8] §6▶ §fReplay §e$focus §7$pauseTxt§7${NumFmt.d(digits = 2, v = speed)}×")
         val padX = 6
-        val sw = mc.getWindow().scaledWidth
-        val sh = mc.getWindow().scaledHeight
-        val lineW = tr.getWidth(line)
+        val sw = mc.getWindow().guiScaledWidth
+        val sh = mc.getWindow().guiScaledHeight
+        val lineW = tr.width(line)
         val barW = 160
         val panelW = maxOf(lineW, barW) + padX * 2
         val x = (sw - panelW) / 2
         val y = sh - 30
         context.fill(x, y, x + panelW, y + 22, BG)
-        context.drawTextWithShadow(tr, line, x + padX, y + 3, WHITE)
+        context.text(tr, line, x + padX, y + 3, WHITE)
         // Progress bar.
         val bx = x + padX
         val by = y + 15

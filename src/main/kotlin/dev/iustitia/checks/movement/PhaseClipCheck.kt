@@ -6,7 +6,7 @@ import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import java.util.UUID
 import kotlin.math.hypot
 import dev.iustitia.checks.LagWindows
@@ -61,7 +61,7 @@ class PhaseClipCheck : Check() {
             if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
-            val world = MinecraftClient.getInstance().world
+            val world = Minecraft.getInstance().level
             val ctx = contextOf(tp.uuid) as PhaseContext
             if (world == null) { ctx.streak = 0; return }
             val bx = Math.floor(tp.pos.x).toInt()

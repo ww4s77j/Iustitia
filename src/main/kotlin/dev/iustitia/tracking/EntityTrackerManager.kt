@@ -1,11 +1,11 @@
 package dev.iustitia.tracking
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.network.OtherClientPlayerEntity
-import net.minecraft.client.world.ClientWorld
-import net.minecraft.item.consume.UseAction
-import net.minecraft.util.math.BlockPos
-import net.minecraft.util.math.Vec3d
+import net.minecraft.client.Minecraft
+import net.minecraft.client.player.RemotePlayer
+import net.minecraft.client.multiplayer.ClientLevel
+import net.minecraft.world.item.ItemUseAnimation
+import net.minecraft.core.BlockPos
+import net.minecraft.world.phys.Vec3
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.protocol.ProtocolDetector
@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Owns the [TrackedPlayer] map and the per-tick poll loop. Each END_CLIENT_TICK it
- * re-resolves every other player from the live [ClientWorld], polls their pos/look/
+ * re-resolves every other player from the live [ClientLevel], polls their pos/look/
  * metadata straight off the entity (no packet parsing), computes deltas, updates the
  * position ring buffer and the onGround proxy, and detects large teleports.
  *
@@ -90,7 +90,7 @@ object EntityTrackerManager {
     fun onDespawn(listener: (UUID) -> Unit) { despawnListeners.add(listener) }
 
     /** Mark a velocity packet received — opens the velocity-exemption window for [ticksAhead]. */
-    fun markVelocity(uuid: UUID, tick: Int, velocity: Vec3d) {
+    fun markVelocity(uuid: UUID, tick: Int, velocity: Vec3) {
         try {
             val tp = byUuid[uuid] ?: return
             tp.velocityTick = tick
@@ -137,7 +137,7 @@ object EntityTrackerManager {
             }
             tp.digActive = true
             tp.digTick = tick
-            tp.digPos = Vec3d(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
+            tp.digPos = Vec3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
         } catch (_: Throwable) {
             // ignore
         }
@@ -146,9 +146,9 @@ object EntityTrackerManager {
     /** Clear the sticky dig state of the player an id-carrying hurt named as the attacker.
      *
      *  This is the proof that a dig observation is stale or spoofed: vanilla cannot attack
-     *  mid-dig, because `MinecraftClient.doAttack` and `handleBlockBreaking` both branch on the
+     *  mid-dig, because `Minecraft.doAttack` and `handleBlockBreaking` both branch on the
      *  same crosshair target, and the crosshair cannot be a block and an entity at once. So an
-     *  attacker the SERVER named (EntityDamageS2CPacket.sourceCauseId is not client-chosen) was
+     *  attacker the SERVER named (ClientboundDamageEventPacket.sourceCauseId is not client-chosen) was
      *  not digging when it landed, whatever the last progress packet said. That bounds a client
      *  that keeps re-sending START_DESTROY_BLOCK to hold a fake dig open: the fake survives at
      *  most until the next hit it lands, which is exactly the case the dig exemption would
@@ -196,7 +196,7 @@ object EntityTrackerManager {
      * Poll all other players for the current tick. Returns the live tracked set
      * (snapshot list). Callers (the check driver) iterate and run checks against it.
      */
-    fun poll(world: ClientWorld?, tick: Int): List<TrackedPlayer> {
+    fun poll(world: ClientLevel?, tick: Int): List<TrackedPlayer> {
         currentTick = tick
         // No world means no players exist client-side, so EVERY tracked entry is stale. Purge
         // before returning rather than after: this early return used to sit above the despawn
@@ -208,12 +208,12 @@ object EntityTrackerManager {
             sweepDespawns(emptySet())
             return emptyList()
         }
-        val client = MinecraftClient.getInstance()
+        val client = Minecraft.getInstance()
         return try {
             val seen = HashSet<UUID>()
-            for (e in world.players) {
+            for (e in world.players()) {
                 if (e === client.player) continue
-                if (e !is OtherClientPlayerEntity) continue
+                if (e !is RemotePlayer) continue
                 try {
                     val tp = byUuid.getOrPut(e.uuid) { TrackedPlayer(e.uuid, e.id, tick) }
                     tp.entity = e
@@ -251,20 +251,20 @@ object EntityTrackerManager {
         }
     }
 
-    private fun updateSnapshot(tp: TrackedPlayer, world: ClientWorld, tick: Int) {
+    private fun updateSnapshot(tp: TrackedPlayer, world: ClientLevel, tick: Int) {
         val e = tp.entity ?: return
         // capture server-space state from the live entity (Entity has no public getPos();
         // use getX/Y/Z which are public final).
-        val newPos = Vec3d(e.getX(), e.getY(), e.getZ())
-        val newYaw = e.yaw
-        val newPitch = e.pitch
+        val newPos = Vec3(e.getX(), e.getY(), e.getZ())
+        val newYaw = e.getYRot()
+        val newPitch = e.getXRot()
 
         // deltas
         val rawDelta = newPos.subtract(tp.pos)
         tp.prevDeltaY = tp.deltaY
         tp.deltaY = rawDelta.y
         tp.delta = rawDelta
-        if (rawDelta.lengthSquared() >= 0.0001) tp.lastMoveTick = tick
+        if (rawDelta.lengthSqr() >= 0.0001) tp.lastMoveTick = tick
         tp.lastPos = tp.pos
         tp.pos = newPos
         tp.lastYaw = tp.yaw; tp.yaw = newYaw
@@ -311,15 +311,15 @@ object EntityTrackerManager {
         }
         // Hand-swing phase for the replay ghost's arm-swing animation (vanilla advances this
         // client-side for other players; plain public field read, no side effects).
-        tp.handSwingTicks = try { e.handSwingTicks } catch (_: Throwable) { 0 }
+        tp.handSwingTicks = try { (e.getSwingAnimation(0f) * 6f).toInt() } catch (_: Throwable) { 0 }
 
         tp.ring.add(tick, newPos)
 
         // metadata flags
-        tp.onGroundPacket = e.isOnGround
+        tp.onGroundPacket = e.onGround()
         tp.sprinting = e.isSprinting
-        tp.sneaking = e.isSneaking
-        tp.gliding = e.isGliding
+        tp.sneaking = e.isCrouching()
+        tp.gliding = e.isFallFlying()
         tp.usingItem = e.isUsingItem
         // Consumable (eat/drink) only — shields (BLOCK) and bows (BOW) also set usingItem but
         // are NOT the killaura-while-eating signal; gating KillAura consume on this avoids
@@ -328,10 +328,10 @@ object EntityTrackerManager {
         tp.isUsingConsumable = try {
             if (!e.isUsingItem) false
             else {
-                val main = e.mainHandStack.useAction
-                val off = e.offHandStack.useAction
-                main == UseAction.EAT || main == UseAction.DRINK ||
-                    off == UseAction.EAT || off == UseAction.DRINK
+                val main = e.mainHandItem.useAnimation
+                val off = e.offhandItem.useAnimation
+                main == ItemUseAnimation.EAT || main == ItemUseAnimation.DRINK ||
+                    off == ItemUseAnimation.EAT || off == ItemUseAnimation.DRINK
             }
         } catch (_: Throwable) {
             false
@@ -341,23 +341,23 @@ object EntityTrackerManager {
         tp.isBlocking = try {
             if (!e.isUsingItem) false
             else {
-                val main = e.mainHandStack.useAction
-                val off = e.offHandStack.useAction
-                main == UseAction.BLOCK || off == UseAction.BLOCK
+                val main = e.mainHandItem.useAnimation
+                val off = e.offhandItem.useAnimation
+                main == ItemUseAnimation.BLOCK || off == ItemUseAnimation.BLOCK
             }
         } catch (_: Throwable) {
             false
         }
-        tp.riptide = e.isUsingRiptide
+        tp.riptide = e.isAutoSpinAttack()
         tp.swimming = e.isSwimming
-        tp.inVehicle = e.hasVehicle()
-        tp.velocity = e.velocity
+        tp.inVehicle = e.isPassenger()
+        tp.velocity = e.deltaMovement
 
         // Per-tick entity-interaction-range sample (the Spear's extended reach lives here as an
         // attribute modifier on generic.entity_interaction_range). ReachCheck reads the max over the
         // recent window so a spear→sword swap between the swing and the (later) hurt tick keeps the
         // spear ceiling. Fail-open to 3.0 (vanilla default) on any read error.
-        try { tp.pushReach(tick, e.getEntityInteractionRange()) } catch (_: Throwable) { tp.pushReach(tick, 3.0) }
+        try { tp.pushReach(tick, e.entityInteractionRange()) } catch (_: Throwable) { tp.pushReach(tick, 3.0) }
 
         // teleport heuristic (the old public markTeleport() entrypoint had no callers — inference
         // never detects a teleport client-side, so this position-delta poll is the only teleport
@@ -365,7 +365,7 @@ object EntityTrackerManager {
         // Also clears fallAccum so void-fall + respawn doesn't fire NoFall (a void-fall leaves a
         // huge stale fallAccum that would fire NoFall the moment the player lands at spawn, even
         // though the fall was voided by the teleport).
-        if (rawDelta.lengthSquared() > 64.0) {
+        if (rawDelta.lengthSqr() > 64.0) {
             tp.lastTeleportTick = tick
             tp.fallAccum = 0.0
         }

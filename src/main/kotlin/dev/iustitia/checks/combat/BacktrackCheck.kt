@@ -69,7 +69,7 @@ class BacktrackCheck : Check() {
             // is out; an AFK victim has old==current==out-of-reach and still never flags.
             // Walked over the ring's own storage: the predicate needs only the previous two
             // samples, so the common (not-frozen) path allocates nothing. Same test as the
-            // Vec3d-list version — three consecutive samples, each within FREEZE_MOVE of the next;
+            // Vec3-list version — three consecutive samples, each within FREEZE_MOVE of the next;
             // newest-first, and distance is symmetric, so direction is irrelevant.
             var frozen = false
             var px = 0.0; var pz = 0.0

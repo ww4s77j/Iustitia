@@ -123,7 +123,7 @@ object AttackInference {
             val d = tp.pos.distanceTo(victimPos)
             if (d > 8.0) continue
             // A hurt that NAMES its attacker can only be claimed by that attacker
-            // (EntityDamageS2CPacket.sourceCauseId, which the client cannot choose). Proximity is
+            // (ClientboundDamageEventPacket.sourceCauseId, which the client cannot choose). Proximity is
             // a guess; this is not. It also stops the wider misattribution class the dig false
             // positive belonged to: mob, arrow, potion and TNT damage name an entity that is not
             // a tracked player, and that must fall open rather than land on whoever swung nearby.

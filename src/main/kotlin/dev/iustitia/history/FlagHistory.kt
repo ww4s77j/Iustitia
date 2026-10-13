@@ -140,7 +140,7 @@ object FlagHistory {
             // Accurate count + peak VL (fail-open: an aggregation error never blocks a flag).
             flagCounts.getOrPut(uuid) { ConcurrentHashMap() }.merge(checkId, 1) { a, b -> a + b }
             maxVlByUuidCheck.getOrPut(uuid) { ConcurrentHashMap() }.merge(checkId, vl) { a, b -> kotlin.math.max(a, b) }
-            // Keep the roaming persistence store in sync (debounced, no-op when the toggle is off).
+            // Keep the persistence store in sync (debounced, no-op when the toggle is off).
             try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
         } catch (_: Throwable) {
             // fail-open: history must never block a flag

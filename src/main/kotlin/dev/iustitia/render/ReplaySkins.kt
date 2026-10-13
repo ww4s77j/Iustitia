@@ -1,8 +1,8 @@
 package dev.iustitia.render
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.util.DefaultSkinHelper
-import net.minecraft.entity.player.SkinTextures
+import net.minecraft.client.Minecraft
+import net.minecraft.client.resources.DefaultPlayerSkin
+import net.minecraft.world.entity.player.PlayerSkin
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -12,14 +12,14 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * ## How it resolves
  *
- * Vanilla already loads every other player's skin into the tab-list [net.minecraft.client.network.PlayerListEntry]
- * on join (async Mojang fetch, wrapped by [net.minecraft.client.texture.PlayerSkinProvider]).
- * [PlayerListEntry.getSkinTextures] returns the loaded [SkinTextures], or the per-UUID **default**
- * ([DefaultSkinHelper.getSkinTextures] — Steve/Alex chosen by UUID hash) until the real skin lands.
+ * Vanilla already loads every other player's skin into the tab-list [net.minecraft.client.multiplayer.PlayerInfo]
+ * on join (async Mojang fetch, wrapped by [net.minecraft.client.resources.SkinManager]).
+ * [PlayerInfo.getSkinTextures] returns the loaded [PlayerSkin], or the per-UUID **default**
+ * ([DefaultPlayerSkin.getSkinTextures] — Steve/Alex chosen by UUID hash) until the real skin lands.
  * So resolution is a synchronous read of an entry vanilla keeps warm — NO direct skin-provider call,
  * NO extra network, NO thread we spin up. We just ask the tab list.
  *
- * "Is the real skin loaded yet?" is answered by [SkinTextures] equality: it is a `record`, so
+ * "Is the real skin loaded yet?" is answered by [PlayerSkin] equality: it is a `record`, so
  * `skin != default` is a clean value comparison. While they're equal (still the default placeholder),
  * we keep re-asking each render frame; the moment the real skin lands they differ and we lock it in.
  * A streak cap ([RESOLVE_FRAMES]) bounds the case of a player who genuinely uses the default skin
@@ -33,13 +33,13 @@ import java.util.concurrent.ConcurrentHashMap
  * thread (from [dev.iustitia.Iustitia.resetAll] on world change — skins are per-server). The map is a
  * [ConcurrentHashMap]; a clear racing a resolve at worst recreates one holder next frame. Unbounded
  * growth is bounded in practice by the player count of the servers you visit; [reset] trims on
- * world change. All paths fail-open to [DefaultSkinHelper.getSteve] — a bad lookup never breaks a frame.
+ * world change. All paths fail-open to [DefaultPlayerSkin.getSteve] — a bad lookup never breaks a frame.
  *
  * Display-only: adds NO detection.
  */
 object ReplaySkins {
 
-    private class Holder(var skin: SkinTextures, var resolved: Boolean, var streak: Int)
+    private class Holder(var skin: PlayerSkin, var resolved: Boolean, var streak: Int)
 
     private val cache = ConcurrentHashMap<UUID, Holder>()
 
@@ -48,35 +48,35 @@ object ReplaySkins {
     private const val RESOLVE_FRAMES = 60
 
     /**
-     * The [SkinTextures] to render for [uuid]. Fast path: cached + resolved → one map read. Slow path
+     * The [PlayerSkin] to render for [uuid]. Fast path: cached + resolved → one map read. Slow path
      * (first frames after a replay starts for a given player, or an uncached UUID): query the tab list.
      * Fail-open to the Steve default on any throw so a ghost always renders.
      */
-    fun resolve(uuid: UUID): SkinTextures {
+    fun resolve(uuid: UUID): PlayerSkin {
         try {
             val h = cache[uuid]
             if (h != null && h.resolved) return h.skin
             return resolveSlow(uuid, h)
         } catch (_: Throwable) {
-            return DefaultSkinHelper.getSteve()
+            return DefaultPlayerSkin.getDefaultSkin()
         }
     }
 
-    private fun resolveSlow(uuid: UUID, existing: Holder?): SkinTextures {
-        val default = DefaultSkinHelper.getSkinTextures(uuid)
+    private fun resolveSlow(uuid: UUID, existing: Holder?): PlayerSkin {
+        val default = DefaultPlayerSkin.get(uuid)
         val h = existing ?: cache.computeIfAbsent(uuid) { Holder(default, false, 0) }
         if (h.resolved) return h.skin
 
-        val mc = MinecraftClient.getInstance()
-        val entry = try { mc.networkHandler?.getPlayerListEntry(uuid) } catch (_: Throwable) { null }
+        val mc = Minecraft.getInstance()
+        val entry = try { mc.connection?.getPlayerInfo(uuid) } catch (_: Throwable) { null }
         if (entry == null) {
             // Not in the tab list (offline / out of range) — lock in the per-UUID default now.
             h.skin = default; h.resolved = true
             return default
         }
-        val skin = try { entry.skinTextures } catch (_: Throwable) { default }
+        val skin = try { entry.skin } catch (_: Throwable) { default }
         h.skin = skin
-        // SkinTextures is a record → != is a clean value compare. Differs from the default ⇒ real skin landed.
+        // PlayerSkin is a record → != is a clean value compare. Differs from the default ⇒ real skin landed.
         if (skin != default) {
             h.resolved = true
         } else {

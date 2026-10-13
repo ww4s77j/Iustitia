@@ -15,7 +15,7 @@ import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.LagCombatCorrelator
 import dev.iustitia.tracking.TrackedPlayer
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.phys.Vec3
 import java.util.UUID
 import kotlin.math.acos
 import kotlin.math.sqrt
@@ -89,7 +89,7 @@ class ReachCheck : Check() {
             // over the last REACH_LAG_WINDOW ticks (lag-comp, mirroring the victim ring at :96) so
             // the spear's 4.5 ceiling covers the legitimate swing-tick hit.
             val liveReach = try {
-                attacker.entity?.getEntityInteractionRange() ?: cfg.threshold
+                attacker.entity?.entityInteractionRange() ?: cfg.threshold
             } catch (_: Throwable) { cfg.threshold }
             val maxReach = maxOf(liveReach, attacker.reachMaxSince(ev.tick - REACH_LAG_WINDOW))
 
@@ -105,7 +105,7 @@ class ReachCheck : Check() {
             val vh = HitboxSizes.forPose(victim)
 
             // candidate victim positions: current + recent ring samples (lag comp)
-            val positions = ArrayList<Vec3d>(8)
+            val positions = ArrayList<Vec3>(8)
             positions.add(victim.pos)
             for (p in victim.ring.getPositions(3, ev.tick)) positions.add(p)
 
@@ -159,7 +159,7 @@ class ReachCheck : Check() {
             for (vp in positions) {
                 val box = AABB.around(vp.x, vp.y, vp.z, vh.width, vh.height).expand(margin)
                 for (look in looks) {
-                    val end = eye.add(look.multiply(maxReach + 3.0))
+                    val end = eye.add(look.scale(maxReach + 3.0))
                     val hit = RayAABB.calculateIntercept(box, eye, end) ?: continue
                     anyHit = true
                     val d = eye.distanceTo(hit)
@@ -179,7 +179,7 @@ class ReachCheck : Check() {
                 // never-FP preserved: an unloaded victim chunk yields a near origin/pos, always
                 // within reach and never flags.)
                 var bestCenter = Double.MAX_VALUE
-                var bestVp: Vec3d = victim.pos
+                var bestVp: Vec3 = victim.pos
                 for (vp in positions) {
                     val d = eye.distanceTo(vp)
                     if (d < bestCenter) { bestCenter = d; bestVp = vp }
@@ -200,7 +200,7 @@ class ReachCheck : Check() {
                     var minAngle = Double.MAX_VALUE
                     if (dirLen > 0.01) {
                         for (look in looks) {
-                            val cosA = look.dotProduct(dir) / (look.length() * dirLen)
+                            val cosA = look.dot(dir) / (look.length() * dirLen)
                             val angle = Math.toDegrees(acos(maxOf(-1.0, minOf(1.0, cosA))))
                             if (angle < minAngle) minAngle = angle
                         }
@@ -294,7 +294,7 @@ class ReachCheck : Check() {
      * distance flags trigger it; `hitboxMiss` (within-reach silent-aim) is a different cheat.
      */
     private fun lagRangeAmplify(
-        attacker: TrackedPlayer, victim: TrackedPlayer, ctx: CheckContext, eye: Vec3d, ev: AttackEvent,
+        attacker: TrackedPlayer, victim: TrackedPlayer, ctx: CheckContext, eye: Vec3, ev: AttackEvent,
     ) {
         try {
             val lag = LagCombatCorrelator.combatCorrelatedLag(attacker.uuid, ev.tick, LAG_CORR_WINDOW)
@@ -324,7 +324,7 @@ class ReachCheck : Check() {
         isMotionless(attacker, tick) && isMotionless(victim, tick)
 
     private fun isMotionless(tp: TrackedPlayer, tick: Int): Boolean {
-        // Aggregation only, so walk the ring's own storage instead of materializing Vec3d samples.
+        // Aggregation only, so walk the ring's own storage instead of materializing Vec3 samples.
         var n = 0
         var minX = Double.MAX_VALUE; var maxX = -Double.MAX_VALUE
         var minZ = Double.MAX_VALUE; var maxZ = -Double.MAX_VALUE

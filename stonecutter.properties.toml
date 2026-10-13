@@ -1,0 +1,30 @@
+# Dependency coordinates per Minecraft version node (and shared defaults).
+#
+# Top-level keys are readable in build.gradle.kts as Gradle properties
+# (e.g. property("deps.fabric_loader")); per-version keys are read via
+# sc.properties (e.g. scProperty("deps.fabric_api")).
+
+mod.id = "iustitia"
+mod.name = "Iustitia"
+mod.group = "dev.iustitia"
+mod.version = "1.4.1"
+
+deps.fabric_loader = "0.19.5"
+deps.fabric_kotlin = "1.13.9+kotlin.2.3.10"
+
+["1.21.11"]
+mod.mc_compat = "1.21.11"
+mod.mc_releases = ["1.21.11"]
+
+# Official (Mojang) mappings are applied to this obfuscated release via loomx;
+# no Yarn coordinates are needed anywhere in this project.
+deps.fabric_api = "0.141.3+1.21.11"
+deps.yacl = "3.8.2+1.21.11-fabric"
+
+["26.3"]
+mod.mc_compat = "26.3"
+mod.mc_releases = ["26.3"]
+
+# 26.x is non-obfuscated: no Yarn mappings exist or are needed.
+deps.fabric_api = "0.162.0+26.3"
+deps.yacl = "3.9.7+26.3-fabric"

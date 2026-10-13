@@ -6,8 +6,8 @@ import com.google.gson.JsonParser
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import net.fabricmc.loader.api.FabricLoader
-import net.minecraft.client.MinecraftClient
-import net.minecraft.text.Text
+import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -19,8 +19,8 @@ private const val PAGE_SIZE = 8
 
 /**
  * Cross-path dedup window. A single physical chat message can arrive on two of the three armed
- * packet hooks within the same tick — most often a signed [ChatMessageS2CPacket] (captured by
- * `onChatMessage`) AND a decorated [GameMessageS2CPacket] / [ProfilelessChatMessageS2CPacket]
+ * packet hooks within the same tick — most often a signed [ClientboundPlayerChatPacket] (captured by
+ * `onChatMessage`) AND a decorated [ClientboundSystemChatPacket] / [ClientboundDisguisedChatPacket]
  * (captured by `captureDecorated` / `captureProfileless`) when a Paper/Spigot chat-formatter plugin
  * sends the signed packet for compliance and re-broadcasts the rank-formatted text as a system
  * message. Both `record` calls land in the same tick, so [ChatHistory.record] drops an exact
@@ -35,9 +35,9 @@ private const val DEDUP_SCAN_TAIL = 16
  * Per-player chat history for `/ius chathist`. Captures messages sent by tracked OTHER players (not
  * the local player, not system/game messages) at the packet level — the
  * [dev.iustitia.mixin.ClientPlayNetworkHandlerMixin] `onChatMessage` inject pulls the raw sender UUID
- * + plaintext straight off `ChatMessageS2CPacket` before decoration, which is the only hook that
+ * + plaintext straight off `ClientboundPlayerChatPacket` before decoration, which is the only hook that
  * exposes a reliable sender UUID (`onGameMessage` has none; `ChatHud.addMessage` bakes the UUID into
- * a decorated `Text`). Each row stores the dual tick + wall-clock-ms convention (mirrors
+ * a decorated `Component`). Each row stores the dual tick + wall-clock-ms convention (mirrors
  * [dev.iustitia.history.FlagHistory.Flag]) so the UI can show a human `[HH:mm:ss]` timestamp.
  *
  * ## Per-server, in-memory + optional persistence
@@ -45,7 +45,7 @@ private const val DEDUP_SCAN_TAIL = 16
  * History is bucketed by server address (`currentServerEntry?.address`, or `"singleplayer"` when
  * null) — one append-only list per server, capped at [MAX_ROWS] (drop oldest). When
  * [dev.iustitia.config.IustitiaConfig.persistenceEnabled] is ON, each server's history is loaded on
- * join from + flushed on leave to `%APPDATA%/.iustitia/chathist/<sanitized-address>/history.jsonl`
+ * join from + flushed on leave to `.minecraft/.iustitia/chathist/<sanitized-address>/history.jsonl`
  * (one JSON row per line) and survives reconnects. When OFF, history is in-memory only and dropped
  * on leave. The folder address is sanitized with the same `[^A-Za-z0-9_.-]→_` rule as
  * [dev.iustitia.replay.ClipStore] filenames.
@@ -72,11 +72,7 @@ object ChatHistory {
     private val byServer: MutableMap<String, MutableList<Row>> = LinkedHashMap()
     private var currentKey: String = "singleplayer"
 
-    private val dataDir: Path by lazy {
-        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
-        if (appdata != null) Path.of(appdata).resolve(".iustitia")
-        else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-    }
+    private val dataDir: Path by lazy { FabricLoader.getInstance().gameDir.resolve(".iustitia") }
     private val chathistDir: Path get() = dataDir.resolve("chathist")
 
     /** Capture gate: the user's toggle AND Iustitia owning chat history. When Scrollback is
@@ -101,7 +97,7 @@ object ChatHistory {
 
     /** The current server-address key (`currentServerEntry?.address` ?: `"singleplayer"`). Fail-open. */
     private fun serverKey(): String = try {
-        MinecraftClient.getInstance().currentServerEntry?.address?.takeIf { it.isNotBlank() } ?: "singleplayer"
+        Minecraft.getInstance().currentServer?.ip?.takeIf { it.isNotBlank() } ?: "singleplayer"
     } catch (_: Throwable) { "singleplayer" }
 
     private fun sanitize(address: String): String = address.replace(Regex("[^A-Za-z0-9_.-]"), "_")
@@ -118,7 +114,7 @@ object ChatHistory {
             val list = synchronized(byServer) { byServer.getOrPut(currentKey) { ArrayList() } }
             synchronized(list) {
                 // Cross-path dedup: scan the tail (same-tick rows are the most recent) and drop this
-                // row if an identical (name, text) was just recorded within the tick window. Text is
+                // row if an identical (name, text) was just recorded within the tick window. Component is
                 // trimmed for the comparison so a stray leading space (decorated path trimStart vs
                 // signed raw content) doesn't defeat it. Fail-open: any throw → fall through to add.
                 val n = list.size
@@ -145,10 +141,10 @@ object ChatHistory {
     /**
      * Capture a decorated system/game message (`onGameMessage` path) — the chat route used by
      * Hypixel/ArchMC/Minemen/Cavern/Evox/Stray/mcpvp/PvpHQ/Mineplex, which send `[rank] username:
-     * message` as a `GameMessageS2CPacket` with no sender UUID. [DecoratedChatParser] recovers the
+     * message` as a `ClientboundSystemChatPacket` with no sender UUID. [DecoratedChatParser] recovers the
      * `(username, message)` structurally and resolves the UUID from the tab list. Fail-open.
      */
-    fun captureDecorated(text: Text) {
+    fun captureDecorated(text: Component) {
         if (!enabled) return
         try {
             val p = DecoratedChatParser.parseGameMessage(text, captureUnknown) ?: return
@@ -162,7 +158,7 @@ object ChatHistory {
      * when a server uses it. [DecoratedChatParser] resolves the display name → clean username +
      * UUID. Fail-open.
      */
-    fun captureProfileless(nameText: Text, messageText: Text) {
+    fun captureProfileless(nameText: Component, messageText: Component) {
         if (!enabled) return
         try {
             val p = DecoratedChatParser.parseProfileless(nameText, messageText, captureUnknown) ?: return

@@ -150,9 +150,9 @@ class IustitiaClientMod : ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(ClientTickEvents.EndTick {
             try {
                 if (!ConfigManager.config.wizardCompleted) {
-                    val mc = net.minecraft.client.MinecraftClient.getInstance()
-                    if (mc.currentScreen == null && mc.world != null && mc.player != null) {
-                        mc.execute { try { mc.setScreen(SetupWizardScreen(null)) } catch (_: Throwable) {} }
+                    val mc = net.minecraft.client.Minecraft.getInstance()
+                    if (mc.gui.screen() == null && mc.level != null && mc.player != null) {
+                        mc.execute { try { mc.setScreenAndShow(SetupWizardScreen(null)) } catch (_: Throwable) {} }
                     }
                 }
             } catch (_: Throwable) {}
@@ -165,7 +165,7 @@ class IustitiaClientMod : ClientModInitializer {
         // Chat-history leave hook: flush (persist ON) or drop (persist OFF) the current server's
         // chat-history bucket on disconnect. Uses Fabric's stable ClientPlayConnectionEvents.DISCONNECT
         // (not a mixin on the inherited ClientCommonNetworkHandler.onDisconnected — that fails to
-        // resolve through the ClientPlayNetworkHandler mixin target with no refMap). Fail-open.
+        // resolve through the ClientPacketListener mixin target with no refMap). Fail-open.
         try {
             ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
                 try { dev.iustitia.chathist.ChatHistory.onLeave() } catch (_: Throwable) {}

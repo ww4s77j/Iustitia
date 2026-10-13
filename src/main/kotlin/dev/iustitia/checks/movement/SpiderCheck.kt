@@ -7,8 +7,8 @@ import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.world.ClientWorld
+import net.minecraft.client.Minecraft
+import net.minecraft.client.multiplayer.ClientLevel
 import java.util.ArrayDeque
 import java.util.UUID
 import dev.iustitia.checks.LagWindows
@@ -60,7 +60,7 @@ class SpiderCheck : Check() {
             // usefully observable and the per-tick block lookups are not worth it. Reset (like the
             // chunk-unloaded branch) so a stale streak can't flag on re-approach.
             if (BlockLookupBudget.beyondObserveRange(tp)) { reset(ctx); return }
-            val world = MinecraftClient.getInstance().world
+            val world = Minecraft.getInstance().level
             val bx = Math.floor(tp.pos.x).toInt()
             val bz = Math.floor(tp.pos.z).toInt()
             val by = Math.floor(tp.pos.y).toInt()
@@ -125,7 +125,7 @@ class SpiderCheck : Check() {
      * scaffolding) return false so a legit ladder climb is exempt. Diagonals are excluded —
      * a wall the player is climbing is at a face, and diagonals add corner-block noise.
      */
-    private fun nearSolidNonClimbableWall(world: ClientWorld, bx: Int, by: Int, bz: Int): Boolean {
+    private fun nearSolidNonClimbableWall(world: ClientLevel, bx: Int, by: Int, bz: Int): Boolean {
         for (d in FACE_NEIGHBORS) {
             val x = bx + d[0]
             val z = bz + d[1]
@@ -142,7 +142,7 @@ class SpiderCheck : Check() {
      *  logic below runs every tick on this cached verdict; for a wall-climber (stationary
      *  horizontally) the verdict is stable, and 1-tick staleness on other motion is absorbed by
      *  the SPIDER_TICKS / CLIMB_WINDOW windows. */
-    private fun nearWallCached(world: ClientWorld, ctx: SpiderContext, bx: Int, by: Int, bz: Int, tick: Int): Boolean {
+    private fun nearWallCached(world: ClientLevel, ctx: SpiderContext, bx: Int, by: Int, bz: Int, tick: Int): Boolean {
         if (ctx.nearWallTick == -10000 || tick - ctx.nearWallTick >= BlockLookupBudget.RATE_LIMIT_N) {
             ctx.nearWall = nearSolidNonClimbableWall(world, bx, by, bz)
             ctx.nearWallTick = tick

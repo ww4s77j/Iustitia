@@ -1,18 +1,17 @@
 package dev.iustitia.keybind
 
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
-import net.minecraft.client.option.KeyBinding
-import net.minecraft.client.util.InputUtil
-import net.minecraft.util.Identifier
-import org.lwjgl.glfw.GLFW
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper
+import net.minecraft.client.KeyMapping
+import com.mojang.blaze3d.platform.InputConstants
+import net.minecraft.resources.Identifier
 
 /**
- * The Iustitia keybind registry (Phase 2 #14). Each bind is a vanilla [KeyBinding] in the
+ * The Iustitia keybind registry (Phase 2 #14). Each bind is a vanilla [KeyMapping] in the
  * "Iustitia" category (rebindable in Controls → Iustitia), registered through Fabric's
- * [KeyBindingHelper] so it shows up in the vanilla keybinds screen and coexists with other mods.
+ * [KeyMappingHelper] so it shows up in the vanilla keybinds screen and coexists with other mods.
  *
  * **Decoupled design:** the [Bind] metadata (id / label / description / default key) is constructed
- * at object-init time with a `null` [KeyBinding]; the actual [KeyBinding] is created and registered
+ * at object-init time with a `null` [KeyMapping]; the actual [KeyMapping] is created and registered
  * lazily in [register] (called from `onInitializeClient`), per-bind and fail-open. This way a
  * registration failure (or a thrown category/keybinding ctor) can NEVER poison the [Keybinds] object
  * or leave [all] unusable — the keybind hub still lists every bind, and the broken one just shows
@@ -21,7 +20,7 @@ import org.lwjgl.glfw.GLFW
  * dead keybinds + nothing in Controls.)
  *
  * Polling is driven from `ClientTickEvents.END_CLIENT_TICK` via [poll] — a bind only fires on its
- * rising edge (`wasPressed`), and dispatch goes through [dev.iustitia.Iustitia.onKeybind], which is
+ * rising edge (`consumeClick`), and dispatch goes through [dev.iustitia.Iustitia.onKeybind], which is
  * fail-open. Nothing here sends packets or touches the local player's state.
  *
  * Default keys are deliberately uncommon (mostly unbound in vanilla) to avoid hijacking existing
@@ -30,48 +29,52 @@ import org.lwjgl.glfw.GLFW
 object Keybinds {
 
     // Create once during client registration, not object initialization: duplicate IDs are rejected.
-    private val category: KeyBinding.Category by lazy {
-        KeyBinding.Category.create(Identifier.of("iustitia", "keybinds"))
+    private val category: KeyMapping.Category by lazy {
+        KeyMapping.Category.register(Identifier.fromNamespaceAndPath("iustitia", "keybinds"))
     }
+
+    /** Numpad − key code (SDL scancode 86): 26.3's InputConstants has no numpad-minus constant
+     *  (`KEY_KP_SUBTRACT` is gone), and key codes are SDL scancodes now, so take it from SDL. */
+    private const val NUMPAD_SUBTRACT = org.lwjgl.sdl.SDLScancode.SDL_SCANCODE_KP_MINUS
 
     /** A registered bind: metadata always present; [keyBinding] is null until [register] succeeds. */
     data class Bind(
         val id: String,
         val defaultKey: Int,
-        var keyBinding: KeyBinding?,
+        var keyBinding: KeyMapping?,
         val label: String,
         val description: String,
     )
 
     private val binds: List<Bind> = listOf(
-        bind("snapshot", GLFW.GLFW_KEY_K, "Snapshot",
+        bind("snapshot", InputConstants.KEY_K, "Snapshot",
             "Post + copy a one-line evidence summary of your crosshair target."),
-        bind("transcript", GLFW.GLFW_KEY_J, "Transcript panel",
+        bind("transcript", InputConstants.KEY_J, "Transcript panel",
             "Toggle the live side-panel transcript for your crosshair target."),
-        bind("session", GLFW.GLFW_KEY_HOME, "Session screen",
+        bind("session", InputConstants.KEY_HOME, "Session screen",
             "Open the dense session summary screen (tier counts, peak, totals)."),
-        bind("keybinds", GLFW.GLFW_KEY_END, "Keybind hub",
+        bind("keybinds", InputConstants.KEY_END, "Keybind hub",
             "Open this screen — lists every bind, its key, and conflicts."),
-        bind("config", GLFW.GLFW_KEY_F8, "Config",
+        bind("config", InputConstants.KEY_F8, "Config",
             "Open the YACL config screen."),
-        bind("note", GLFW.GLFW_KEY_N, "Note target",
+        bind("note", InputConstants.KEY_N, "Note target",
             "Read the moderator note on your crosshair target (if any)."),
-        bind("compact", GLFW.GLFW_KEY_F7, "Compact mode",
+        bind("compact", InputConstants.KEY_F7, "Compact mode",
             "Toggle compact one-line alerts + condensed screens."),
-        bind("watch", GLFW.GLFW_KEY_F9, "Watch (follow-cam)",
+        bind("watch", InputConstants.KEY_F9, "Watch (follow-cam)",
             "Follow-cam orbit on your crosshair target — same as /ius spectate. Forces F1 and a " +
                 "third-party view with all entities visible; move the mouse to orbit, walk or get " +
                 "hit to stop, press the bind again to exit. Handled by FollowCam when that mod is " +
                 "installed."),
-        bind("replayPause", GLFW.GLFW_KEY_KP_5, "Replay pause/resume",
+        bind("replayPause", InputConstants.KEY_NUMPAD5, "Replay pause/resume",
             "Pause or resume an active instant-replay (/ius replay). Default: numpad 5."),
-        bind("replaySeekFwd", GLFW.GLFW_KEY_KP_ADD, "Replay seek +5s",
+        bind("replaySeekFwd", InputConstants.KEY_ADD, "Replay seek +5s",
             "Jump an active replay 5 seconds forward (works while playing). Default: numpad +."),
-        bind("replaySeekBack", GLFW.GLFW_KEY_KP_SUBTRACT, "Replay seek −5s",
+        bind("replaySeekBack", NUMPAD_SUBTRACT, "Replay seek −5s",
             "Jump an active replay 5 seconds back (works while playing). Default: numpad −."),
-        bind("replayExit", GLFW.GLFW_KEY_KP_0, "Replay exit",
+        bind("replayExit", InputConstants.KEY_NUMPAD0, "Replay exit",
             "Stop the active replay/clip-playback and restore the live view. Default: numpad 0."),
-        bind("replayToggle", GLFW.GLFW_KEY_KP_MULTIPLY, "Replay toggle",
+        bind("replayToggle", InputConstants.KEY_MULTIPLY, "Replay toggle",
             "Start a replay of the configured seconds (default numpad *); press again to stop."),
     )
 
@@ -90,8 +93,8 @@ object Keybinds {
         val category = this.category
         for (b in binds) {
             try {
-                val kb = KeyBinding("key.iustitia.${b.id}", InputUtil.Type.KEYSYM, b.defaultKey, category)
-                KeyBindingHelper.registerKeyBinding(kb)
+                val kb = KeyMapping("key.iustitia.${b.id}", InputConstants.Type.KEYBOARD, b.defaultKey, category)
+                KeyMappingHelper.registerKeyMapping(kb)
                 b.keyBinding = kb
             } catch (_: Throwable) {
                 // fail-open: leave keyBinding null; hub/poll handle it
@@ -109,7 +112,7 @@ object Keybinds {
             for (b in binds) {
                 try {
                     val kb = b.keyBinding ?: continue
-                    if (kb.wasPressed()) dev.iustitia.Iustitia.onKeybind(b.id)
+                    if (kb.consumeClick()) dev.iustitia.Iustitia.onKeybind(b.id)
                 } catch (_: Throwable) {}
             }
         } catch (_: Throwable) {}

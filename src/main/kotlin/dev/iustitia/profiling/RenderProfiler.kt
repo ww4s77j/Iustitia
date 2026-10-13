@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * method shows up as a tall bar in the flat tally).
  *
  * Writes a text report to `<dataDir>/debugfps/iustitia-debugfps-<timestamp>.txt` (dataDir =
- * `%APPDATA%/.iustitia` on Windows — the same place the persistence store / clips live) so the
+ * `.minecraft/.iustitia` — the same place the persistence store / clips live) so the
  * user can hand the file back for analysis. All paths fail-open; sampling never throws into the
  * render thread (a cross-thread `getStackTrace` failure is swallowed by the sampler).
  */
@@ -203,12 +203,8 @@ object RenderProfiler {
 
     private fun pct(v: Double): String = String.format(java.util.Locale.US, "%.1f", v)
 
-    /** `%APPDATA%/.iustitia/debugfps` on Windows, `<gameDir>/.iustitia/debugfps` elsewhere
-     *  (matches [dev.iustitia.persistence.PersistenceManager]'s dataDir resolution). */
-    private fun profileDir(): Path {
-        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
-        val base = if (appdata != null) Path.of(appdata).resolve(".iustitia")
-            else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-        return base.resolve("debugfps")
-    }
+    /** `<gameDir>/.iustitia/debugfps` (matches [dev.iustitia.persistence.PersistenceManager]'s
+     *  dataDir resolution - everything inside the game's own folder). */
+    private fun profileDir(): Path =
+        FabricLoader.getInstance().gameDir.resolve(".iustitia").resolve("debugfps")
 }

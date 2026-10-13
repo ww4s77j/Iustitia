@@ -8,7 +8,7 @@ import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.abs
@@ -39,7 +39,7 @@ import dev.iustitia.checks.LagWindows
  * `hoverTicks` are reset in the `groundedProxy` branch, so "consecutive" means consecutive
  * *evaluated* ticks. Without that reset the ramp walked by a tracked player fires `Fly` from its
  * second step: [TrackedPlayer.deltaY] is a **raw** position delta (the tracker's snapshot is
- * `Vec3d(e.getX(), e.getY(), e.getZ())` — entity fields, *not* render interpolation), so a 0.5
+ * `Vec3(e.getX(), e.getY(), e.getZ())` — entity fields, *not* render interpolation), so a 0.5
  * step-up arrives as a **single-tick** Δy spike followed by three flat grounded ticks. That spike
  * clears `expectedY + 0.1` by a wide margin (`prevDeltaY ≈ 0` ⇒ `expectedY = (0 − 0.08)·0.98 ≈
  * −0.078`, and `recentDescend` is 0 because Δy is never negative), while the flat ticks return
@@ -368,7 +368,7 @@ class FlyEnvelopeCheck : Check() {
     }
 
     private fun isOnClimbable(tp: TrackedPlayer): Boolean = try {
-        val world = MinecraftClient.getInstance().world ?: return false
+        val world = Minecraft.getInstance().level ?: return false
         val bx = Math.floor(tp.pos.x).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
         val by = Math.floor(tp.pos.y).toInt()
@@ -403,7 +403,7 @@ class FlyEnvelopeCheck : Check() {
         if (abs(tp.deltaY) >= 0.01) {
             false
         } else {
-            val world = MinecraftClient.getInstance().world
+            val world = Minecraft.getInstance().level
             world != null && WorldQueries.isSolidBelowFootprint(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.05)
         }
     } catch (_: Throwable) {
@@ -411,7 +411,7 @@ class FlyEnvelopeCheck : Check() {
     }
 
     private fun hasBlockAbove(tp: TrackedPlayer): Boolean = try {
-        val world = MinecraftClient.getInstance().world ?: return false
+        val world = Minecraft.getInstance().level ?: return false
         // Math.floor, not toInt(): truncation toward zero picks the wrong column at negative
         // coords (a ceiling above a player at x=-0.4 would be sampled at column 0, not -1).
         val bx = Math.floor(tp.pos.x).toInt()

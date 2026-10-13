@@ -15,8 +15,8 @@ import dev.iustitia.tracking.LagCombatCorrelator
 import dev.iustitia.ui.KeybindHubScreen
 import dev.iustitia.ui.SessionScreen
 import dev.iustitia.ui.TranscriptPanelScreen
-import net.minecraft.client.MinecraftClient
-import net.minecraft.text.Text
+import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
 import java.util.UUID
 
 /**
@@ -49,7 +49,7 @@ object Iustitia {
 
     /** True iff the current thread is the client main thread (== render thread on 1.21.11). */
     fun onClientThread(): Boolean = try {
-        MinecraftClient.getInstance().isOnThread
+        Minecraft.getInstance().isSameThread
     } catch (_: Throwable) {
         // fail-open: when we can't tell (headless unit tests, very early boot), behave as
         // if on-thread so callers dispatch inline — no behavior change vs pre-queue.
@@ -125,7 +125,7 @@ object Iustitia {
 
     fun init() {
         ConfigManager.load()
-        // Load the roaming persistence store (notes + tier/flag history) when the toggle is on.
+        // Load the persistence store (notes + tier/flag history) when the toggle is on.
         // No-op when off (session is in-memory only as before).
         try { dev.iustitia.persistence.PersistenceManager.loadOnStartup() } catch (_: Throwable) {}
         AttackInference.bind(bus)
@@ -200,8 +200,8 @@ object Iustitia {
         // tracker marks, world-change resets) are all applied before this tick's engine pass.
         try { drainDeferred() } catch (_: Throwable) {}
         try {
-            val client = MinecraftClient.getInstance()
-            val world = client.world
+            val client = Minecraft.getInstance()
+            val world = client.level
             val tracked = EntityTrackerManager.poll(world, tick)
 
             // Axis B: refresh each entity's local-freeze episode from THIS tick's deltas. After
@@ -289,7 +289,7 @@ object Iustitia {
      */
     fun onKeybind(id: String) {
         try {
-            val mc = MinecraftClient.getInstance()
+            val mc = Minecraft.getInstance()
             when (id) {
                 "snapshot" -> {
                     val t = crosshairTarget()
@@ -297,16 +297,16 @@ object Iustitia {
                     else { Snapshot.capture(t.first, t.second); chat(mc, "§8[§diustitia§8] §7snapshot of §f${t.second}§7 posted + copied to clipboard") }
                 }
                 "transcript" -> {
-                    if (mc.currentScreen is TranscriptPanelScreen) { mc.setScreen(null); return }
+                    if (mc.gui.screen() is TranscriptPanelScreen) { mc.gui.setScreen(null); return }
                     val t = crosshairTarget()
                     if (t == null) chat(mc, "§8[§diustitia§8] §7look at a player to open their transcript panel.")
-                    else mc.execute { try { mc.setScreen(TranscriptPanelScreen(t.first, t.second, null)) } catch (_: Throwable) {} }
+                    else mc.execute { try { mc.setScreenAndShow(TranscriptPanelScreen(t.first, t.second, null)) } catch (_: Throwable) {} }
                 }
-                "session" -> mc.execute { try { mc.setScreen(SessionScreen(mc.currentScreen)) } catch (_: Throwable) {} }
-                "keybinds" -> mc.execute { try { mc.setScreen(KeybindHubScreen(mc.currentScreen)) } catch (_: Throwable) {} }
+                "session" -> mc.execute { try { mc.setScreenAndShow(SessionScreen(mc.gui.screen())) } catch (_: Throwable) {} }
+                "keybinds" -> mc.execute { try { mc.setScreenAndShow(KeybindHubScreen(mc.gui.screen())) } catch (_: Throwable) {} }
                 "config" -> {
                     mc.execute {
-                        try { mc.setScreen(dev.iustitia.config.YaclScreenBuilder.build(mc.currentScreen)) }
+                        try { mc.setScreenAndShow(dev.iustitia.config.YaclScreenBuilder.build(mc.gui.screen())) }
                         catch (_: Throwable) { chat(mc, "§8[§diustitia§8] §cfailed to open config screen") }
                     }
                 }
@@ -403,16 +403,16 @@ object Iustitia {
 
     /** The other player under the crosshair (uuid → name), or null. Fail-open. */
     private fun crosshairTarget(): Pair<UUID, String>? = try {
-        val client = MinecraftClient.getInstance()
-        val hit = client.crosshairTarget
-        val ent = (hit as? net.minecraft.util.hit.EntityHitResult)?.entity
-        val other = ent as? net.minecraft.client.network.OtherClientPlayerEntity
+        val client = Minecraft.getInstance()
+        val hit = client.hitResult
+        val ent = (hit as? net.minecraft.world.phys.EntityHitResult)?.entity
+        val other = ent as? net.minecraft.client.player.RemotePlayer
         if (other != null) other.uuid to (other.name.string.ifEmpty { other.uuid.toString().take(8) }) else null
     } catch (_: Throwable) { null }
 
     /** One chat line to the local player (fail-open). */
-    private fun chat(mc: MinecraftClient, line: String) {
-        try { mc.execute { try { mc.player?.sendMessage(Text.literal(line), false) } catch (_: Throwable) {} } }
+    private fun chat(mc: Minecraft, line: String) {
+        try { mc.execute { try { mc.player?.sendSystemMessage(Component.literal(line)) } catch (_: Throwable) {} } }
         catch (_: Throwable) {}
     }
 

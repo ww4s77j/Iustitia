@@ -1,7 +1,7 @@
 package dev.iustitia.checks.movement
 
 import dev.iustitia.tracking.TrackedPlayer
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 
 /**
  * Shared perf budget for the per-player block-lookup movement checks (Spider / WallSprint /
@@ -41,7 +41,7 @@ object BlockLookupBudget {
     /** True iff [tp] is beyond the observation range (skip the block-lookup checks for it).
      *  Fail-open: null/throwing local player → false (don't skip). */
     fun beyondObserveRange(tp: TrackedPlayer): Boolean = try {
-        val self = MinecraftClient.getInstance().player ?: return false
+        val self = Minecraft.getInstance().player ?: return false
         val dx = tp.pos.x - self.x
         val dz = tp.pos.z - self.z
         dx * dx + dz * dz > OBSERVE_RANGE_SQ

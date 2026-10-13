@@ -5,7 +5,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * `.iusclip` file storage. Clips are written to `%APPDATA%/.iustitia/clips` on Windows (roaming, so
+ * `.iusclip` file storage. Clips are written to `.minecraft/.iustitia/clips`  (inside the game folder, so
  * a multi-instance Modrinth user finds them in one place regardless of instance path) and to the
  * game-dir `.iustitia/clips` elsewhere.
  *
@@ -18,12 +18,9 @@ object ClipStore {
 
     private const val EXT = ".iusclip"
 
-    /** Roaming clips dir, created if missing. `%APPDATA%/.iustitia/clips` on Windows, game-dir elsewhere. */
+    /** Clips dir, created if missing: `<gameDir>/.iustitia/clips` - inside the game's own folder. */
     private val clipsDir: Path by lazy {
-        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
-        val base = if (appdata != null) Path.of(appdata).resolve(".iustitia")
-        else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-        base.resolve("clips")
+        FabricLoader.getInstance().gameDir.resolve(".iustitia").resolve("clips")
     }
 
     /** A display name (no extension) for each `.iusclip` in the dir, sorted. Empty if none / error. */

@@ -6,16 +6,17 @@ import dev.iustitia.history.FlagHistory
 import dev.iustitia.i18n.L10n
 import dev.iustitia.info.FpHint
 import dev.iustitia.tracking.EntityTrackerManager
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.font.TextRenderer
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.text.Text
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry
+import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.Font
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.network.chat.Component
+import net.minecraft.resources.Identifier
 import java.util.UUID
 
 /**
  * Phase B HUD overlays — the two lowest-risk deferred render features, delivered via the stable
- * Fabric [HudRenderCallback] (HUD-text drawing only, no world render / no camera mixin / no mixin at
+ * Fabric [HudElementRegistry] (HUD-text drawing only, no world render / no camera mixin / no mixin at
  * all → build-verifiable and launch-safe, unlike the WorldRenderEvents / camera-control pieces that
  * remain gated behind a runtime probe). Everything here is **display-only**: it reads existing
  * [FlagHistory] / [EntityTrackerManager] state and draws text; it touches no check, no packet, no
@@ -73,15 +74,15 @@ object HudOverlay {
         val name: String,
         val tick: Int,
         /** Header + explanation + FP hint — the compact panel's lines (and the tooltip's prefix). */
-        val lines: List<Text>,
+        val lines: List<Component>,
     ) {
         /** [lines] plus the top most-flagged checks line (the "what are they actually doing"
          *  detail). Only the hover tooltip needs it, so it is built on demand. */
-        val hoverLines: List<Text> by lazy(LazyThreadSafetyMode.NONE) {
+        val hoverLines: List<Component> by lazy(LazyThreadSafetyMode.NONE) {
             val summary = try {
                 val counts = FlagHistory.flagCounts(uuid)
                 if (counts.isEmpty()) null
-                else Text.literal(counts.entries.take(HOVER_TOP_FLAGS).joinToString("§8, §7") { (cid, c) ->
+                else Component.literal(counts.entries.take(HOVER_TOP_FLAGS).joinToString("§8, §7") { (cid, c) ->
                     "§7$cid §8×§f$c"
                 })
             } catch (_: Throwable) { null }
@@ -94,22 +95,22 @@ object HudOverlay {
     /** Register the single HUD callback. Call once from `onInitializeClient`. Fail-open. */
     fun register() {
         try {
-            HudRenderCallback.EVENT.register(HudRenderCallback { context, _ ->
+            HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("iustitia", "hud_overlay")) { context, _ ->
                 try { render(context) } catch (_: Throwable) { /* never crash the frame */ }
-            })
+            }
         } catch (_: Throwable) {
             // fail-open: if the callback registration shape differs at runtime, the HUDs just don't
             // appear — detection/tiering/alerts are unaffected.
         }
     }
 
-    private fun render(context: DrawContext) {
+    private fun render(context: GuiGraphicsExtractor) {
         val cfg = ConfigManager.config
-        val mc = MinecraftClient.getInstance()
+        val mc = Minecraft.getInstance()
         // Don't draw over an open screen (HUD render is normally skipped then, but guard anyway — a
         // paused-game HUD over the keybind hub / config screen would be visual noise).
-        if (mc.currentScreen != null) return
-        val tr = mc.textRenderer ?: return
+        if (mc.gui.screen() != null) return
+        val tr = mc.font ?: return
 
         // Resolve the crosshair target ONCE per frame; dwell tracking and both panels share it.
         // Dwell tracking for the hover tooltip: increment while the crosshair rests on the SAME
@@ -154,10 +155,10 @@ object HudOverlay {
             FlagHistory.Tier.YELLOW -> "e" to "!"
             FlagHistory.Tier.RED -> "c" to "X"
         }
-        val lines = ArrayList<Text>(3)
+        val lines = ArrayList<Component>(3)
         lines.add(L10n.t("iustitia.hud.confidenceHead", name, color, glyph, score))
         val explanation = try { FlagHistory.confidenceExplanation(uuid) } catch (_: Throwable) { "" }
-        if (explanation.isNotEmpty()) lines.add(Text.literal("§7$explanation"))
+        if (explanation.isNotEmpty()) lines.add(Component.literal("§7$explanation"))
         // FP hint for the first alerted check (any alerted check's benign-cause is useful context).
         try {
             val hint = FlagHistory.alertedChecksOf(uuid).firstNotNullOfOrNull { FpHint.hint(it) }
@@ -168,7 +169,7 @@ object HudOverlay {
     }
 
     /** Top-left `⚠ lag` while a server-lag spike / burst is recent. */
-    private fun renderLagIcon(context: DrawContext, tr: TextRenderer) {
+    private fun renderLagIcon(context: GuiGraphicsExtractor, tr: Font) {
         val tick = Iustitia.tickCounter
         val lagTick = EntityTrackerManager.lastServerLagTick
         val burstTick = EntityTrackerManager.lastLagBurstTick
@@ -176,14 +177,14 @@ object HudOverlay {
             (tick - burstTick) in 0..LAG_RECENT_TICKS
         if (!recent) return
         val line = L10n.t("iustitia.hud.lagIcon")
-        val w = tr.getWidth(line) + 8
+        val w = tr.width(line) + 8
         context.fill(2, 2, 2 + w, 14, BG)
-        context.drawTextWithShadow(tr, line, 6, 5, WHITE)
+        context.text(tr, line, 6, 5, WHITE)
     }
 
     /** Compact crosshair-target confidence panel, drawn just below the screen centre. */
     private fun renderConfidencePanel(
-        context: DrawContext, tr: TextRenderer, mc: MinecraftClient, model: PanelModel,
+        context: GuiGraphicsExtractor, tr: Font, mc: Minecraft, model: PanelModel,
     ) {
         val lines = model.lines
         if (lines.size <= 1) return  // head only + nothing else → skip (don't draw a bare header)
@@ -193,16 +194,16 @@ object HudOverlay {
         val padX = 6
         val padY = 4
         val lineH = 11
-        val panelW = (lines.maxOf { tr.getWidth(it) } + padX * 2)
+        val panelW = (lines.maxOf { tr.width(it) } + padX * 2)
         val panelH = lineH * lines.size + padY * 2
-        val sw = mc.getWindow().scaledWidth
+        val sw = mc.getWindow().guiScaledWidth
         val x = (sw - panelW) / 2
-        val y = mc.getWindow().scaledHeight / 2 + 14
+        val y = mc.getWindow().guiScaledHeight / 2 + 14
 
         context.fill(x, y, x + panelW, y + panelH, BG)
         var ty = y + padY
         for (ln in lines) {
-            context.drawTextWithShadow(tr, ln, x + padX, ty, WHITE)
+            context.text(tr, ln, x + padX, ty, WHITE)
             ty += lineH
         }
     }
@@ -218,7 +219,7 @@ object HudOverlay {
      * "clean" banner; it disappears the moment the crosshair leaves or changes target.
      */
     private fun renderHoverTooltip(
-        context: DrawContext, tr: TextRenderer, mc: MinecraftClient,
+        context: GuiGraphicsExtractor, tr: Font, mc: Minecraft,
         model: PanelModel,
     ) {
         val lines = model.hoverLines
@@ -226,9 +227,9 @@ object HudOverlay {
         val padX = 6
         val padY = 4
         val lineH = 11
-        val panelW = (lines.maxOf { tr.getWidth(it) } + padX * 2)
+        val panelW = (lines.maxOf { tr.width(it) } + padX * 2)
         val panelH = lineH * lines.size + padY * 2
-        val sw = mc.getWindow().scaledWidth
+        val sw = mc.getWindow().guiScaledWidth
         val x = (sw - panelW) / 2
         // Top-center, below the lag icon row.
         val y = 18
@@ -236,7 +237,7 @@ object HudOverlay {
         context.fill(x, y, x + panelW, y + panelH, BG)
         var ty = y + padY
         for (ln in lines) {
-            context.drawTextWithShadow(tr, ln, x + padX, ty, WHITE)
+            context.text(tr, ln, x + padX, ty, WHITE)
             ty += lineH
         }
     }

@@ -15,8 +15,8 @@ import org.spongepowered.asm.mixin.extensibility.IMixinInfo
  * — they chain, and each guard no-ops while its feature is inactive. But two mixins target the SAME
  * instruction with `@Redirect`:
  *
- *  - `GameRenderer.renderHand` → `Perspective.isFirstPerson()Z` (ordinal 0)
- *  - `WorldRenderer.render` → `ClientPlayerEntity.isSpectator()Z` (ordinal 0)
+ *  - `GameRenderer.renderHand` → `CameraType.isFirstPerson()Z` (ordinal 0)
+ *  - `LevelRenderer.render` → `LocalPlayer.isSpectator()Z` (ordinal 0)
  *
  * SnapClip's `GameRendererMixin`/`WorldRendererMixin` redirect exactly those call sites (SnapClip is
  * derived from Iustitia), and Mixin hard-fails a class when two `@Redirect`s claim one instruction

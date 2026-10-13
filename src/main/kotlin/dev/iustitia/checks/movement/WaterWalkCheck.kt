@@ -6,7 +6,7 @@ import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -46,7 +46,7 @@ class WaterWalkCheck : Check() {
             val horiz = hypot(tp.delta.x, tp.delta.z) * 20.0
             val ctx = contextOf(tp.uuid) as WaterWalkContext
             if (horiz < cfg.threshold || abs(tp.deltaY) > 0.1) { ctx.streak = 0; return }
-            val world = MinecraftClient.getInstance().world
+            val world = Minecraft.getInstance().level
             if (world == null) { ctx.streak = 0; return }
             val bx = Math.floor(tp.pos.x).toInt()
             val bz = Math.floor(tp.pos.z).toInt()

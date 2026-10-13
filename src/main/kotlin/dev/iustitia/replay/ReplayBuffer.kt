@@ -3,15 +3,15 @@ package dev.iustitia.replay
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.tracking.TrackedPlayer
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.world.ClientWorld
-import net.minecraft.entity.EquipmentSlot
-import net.minecraft.entity.Entity
-import net.minecraft.entity.LivingEntity
-import net.minecraft.entity.player.PlayerEntity
-import net.minecraft.item.ItemStack
-import net.minecraft.registry.Registries
-import net.minecraft.world.World
+import net.minecraft.client.Minecraft
+import net.minecraft.client.multiplayer.ClientLevel
+import net.minecraft.world.entity.EquipmentSlot
+import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.LivingEntity
+import net.minecraft.world.entity.player.Player
+import net.minecraft.world.item.ItemStack
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.world.level.Level
 import java.util.ArrayDeque
 import java.util.UUID
 
@@ -176,7 +176,7 @@ object ReplayBuffer {
 
     // --- segment tracking (v13+) ---
     private var currentSegmentId: Int = -1
-    private var lastWorld: World? = null
+    private var lastWorld: Level? = null
     private var lastX: Double = 0.0
     private var lastZ: Double = 0.0
     private val segmentDimensions: HashMap<Int, String> = HashMap()
@@ -206,8 +206,8 @@ object ReplayBuffer {
     fun recordTick(tick: Int, tracked: Collection<TrackedPlayer>) {
         if (!enabled) return
         try {
-            val mc = MinecraftClient.getInstance()
-            val world = mc.world
+            val mc = Minecraft.getInstance()
+            val world = mc.level
             // One config snapshot for the whole tick (~8 [ConfigManager.config] getter reads collapsed
             // to one): the gates below can't disagree mid-tick if a config save swaps the snapshot
             // between them (e.g. entity capture on, entity cap from the new values).
@@ -217,7 +217,7 @@ object ReplayBuffer {
             val snaps = ArrayList<PlayerSnap>(minOf(tracked.size + 1, MAX_PLAYERS_PER_FRAME))
             // Self FIRST: your own body belongs in every frame, and ahead of the tracked players so a
             // full player cap on a crowded server can never crowd it out. [tracked] only ever holds
-            // OTHER players (the tracker polls OtherClientPlayerEntity), so this is the single capture
+            // OTHER players (the tracker polls RemotePlayer), so this is the single capture
             // path for the local player. Fail-open: a null self just means no self ghost this tick.
             val self = mc.player
             if (self != null) buildSelfSnap(self)?.let { snaps.add(it) }
@@ -242,7 +242,7 @@ object ReplayBuffer {
      * gets a fresh id + recorded dimension key. (Chunk rolling capture is Phase 2; this only tags the
      * frames so the codec/overlay can later group them.) Fail-open.
      */
-    private fun updateSegment(mc: MinecraftClient, world: World?, cfg: IustitiaConfig) {
+    private fun updateSegment(mc: Minecraft, world: Level?, cfg: IustitiaConfig) {
         val self = mc.player
         val px = self?.x ?: 0.0
         val pz = self?.z ?: 0.0
@@ -262,7 +262,7 @@ object ReplayBuffer {
         if (world != null) {
             if (newSegment) {
                 currentSegmentId++
-                segmentDimensions[currentSegmentId] = try { world.registryKey.value.toString() } catch (_: Throwable) { "?" }
+                segmentDimensions[currentSegmentId] = try { world.dimension().identifier().toString() } catch (_: Throwable) { "?" }
                 beginSegmentCapture(currentSegmentId, px, pz, cfg)
             }
             // Roll the segment's world in a little each tick (bounded per-tick cost), so an export has
@@ -443,13 +443,13 @@ object ReplayBuffer {
         else -> POSE_STAND
     }
 
-    private val itemIdCache = HashMap<net.minecraft.item.Item, String>()
+    private val itemIdCache = HashMap<net.minecraft.world.item.Item, String>()
 
     /** Map a live [ItemStack] to its registry-id string (`"minecraft:diamond_sword"`), or `""` for an
      *  empty/null stack. Fail-open: any read error → `""` (the ghost just shows no item in that slot). */
     private fun idOf(stack: ItemStack?): String = try {
         if (stack == null || stack.isEmpty) ""
-        else itemIdCache.getOrPut(stack.item) { Registries.ITEM.getId(stack.item).toString() }
+        else itemIdCache.getOrPut(stack.item) { BuiltInRegistries.ITEM.getId(stack.item).toString() }
     } catch (_: Throwable) { "" }
 
     /**
@@ -466,14 +466,14 @@ object ReplayBuffer {
         val hurtTime = try { (e?.hurtTime ?: 0).toByte() } catch (_: Throwable) { 0 }
         val health = try { e?.getHealth() ?: 20f } catch (_: Throwable) { 20f }
         val maxHealth = try { e?.getMaxHealth() ?: 20f } catch (_: Throwable) { 20f }
-        val bodyYaw = try { e?.bodyYaw ?: tp.yaw } catch (_: Throwable) { tp.yaw }
-        val headYaw = try { e?.headYaw ?: tp.yaw } catch (_: Throwable) { tp.yaw }
-        val mainHand = idOf(e?.mainHandStack)
-        val offHand = idOf(e?.offHandStack)
-        val head = idOf(e?.getEquippedStack(EquipmentSlot.HEAD))
-        val chest = idOf(e?.getEquippedStack(EquipmentSlot.CHEST))
-        val legs = idOf(e?.getEquippedStack(EquipmentSlot.LEGS))
-        val feet = idOf(e?.getEquippedStack(EquipmentSlot.FEET))
+        val bodyYaw = try { e?.yBodyRot ?: tp.yaw } catch (_: Throwable) { tp.yaw }
+        val headYaw = try { e?.yHeadRot ?: tp.yaw } catch (_: Throwable) { tp.yaw }
+        val mainHand = idOf(e?.mainHandItem)
+        val offHand = idOf(e?.offhandItem)
+        val head = idOf(e?.getItemBySlot(EquipmentSlot.HEAD))
+        val chest = idOf(e?.getItemBySlot(EquipmentSlot.CHEST))
+        val legs = idOf(e?.getItemBySlot(EquipmentSlot.LEGS))
+        val feet = idOf(e?.getItemBySlot(EquipmentSlot.FEET))
         PlayerSnap(
             u.mostSignificantBits, u.leastSignificantBits,
             tp.pos.x.toFloat(), tp.pos.y.toFloat(), tp.pos.z.toFloat(),
@@ -488,32 +488,32 @@ object ReplayBuffer {
     /**
      * Capture the LOCAL player (the recorder) as an ordinary snap, so `/ius replay` + `/ius playclip`
      * draw your own body alongside everyone else's. This is the only capture path for self: the tracker
-     * polls `OtherClientPlayerEntity` exclusively, so [buildSnap] never sees you.
+     * polls `RemotePlayer` exclusively, so [buildSnap] never sees you.
      *
-     * [net.minecraft.client.network.ClientPlayerEntity] IS-A [PlayerEntity] and so a [LivingEntity], so
+     * [net.minecraft.client.player.LocalPlayer] IS-A [Player] and so a [LivingEntity], so
      * every read here is the same one [buildSnap] does on a tracked player's entity. The result goes
      * into [Frame.snaps] as a normal entry — the clip format (v13) is unchanged, and the renderer, the
      * tier lookup and the playhead interpolator all key snaps by UUID, so nothing needs a self case.
      * Fail-open: null drops the self ghost for that tick, never the frame.
      */
-    internal fun buildSelfSnap(p: net.minecraft.client.network.ClientPlayerEntity): PlayerSnap? = try {
+    internal fun buildSelfSnap(p: net.minecraft.client.player.LocalPlayer): PlayerSnap? = try {
         val u = p.uuid
         val nm = p.name.string.ifEmpty { u.toString().take(8) }
         PlayerSnap(
             u.mostSignificantBits, u.leastSignificantBits,
             p.x.toFloat(), p.y.toFloat(), p.z.toFloat(),
-            p.yaw, p.pitch,
-            bodyYaw = p.bodyYaw, headYaw = p.headYaw,
-            swingTicks = try { p.handSwingTicks } catch (_: Throwable) { 0 },
+            p.getYRot(), p.getXRot(),
+            bodyYaw = p.yBodyRot, headYaw = p.yHeadRot,
+            swingTicks = try { (p.getSwingAnimation(0f) * 6f).toInt() } catch (_: Throwable) { 0 },
             pose = poseOfLiving(p), name = nm,
             hurtTime = try { p.hurtTime.toByte() } catch (_: Throwable) { 0 },
             health = try { p.getHealth() } catch (_: Throwable) { 20f },
             maxHealth = try { p.getMaxHealth() } catch (_: Throwable) { 20f },
-            mainHand = idOf(p.mainHandStack), offHand = idOf(p.offHandStack),
-            head = idOf(p.getEquippedStack(EquipmentSlot.HEAD)),
-            chest = idOf(p.getEquippedStack(EquipmentSlot.CHEST)),
-            legs = idOf(p.getEquippedStack(EquipmentSlot.LEGS)),
-            feet = idOf(p.getEquippedStack(EquipmentSlot.FEET)),
+            mainHand = idOf(p.mainHandItem), offHand = idOf(p.offhandItem),
+            head = idOf(p.getItemBySlot(EquipmentSlot.HEAD)),
+            chest = idOf(p.getItemBySlot(EquipmentSlot.CHEST)),
+            legs = idOf(p.getItemBySlot(EquipmentSlot.LEGS)),
+            feet = idOf(p.getItemBySlot(EquipmentSlot.FEET)),
         )
     } catch (_: Throwable) { null }
 
@@ -523,7 +523,7 @@ object ReplayBuffer {
      * (`clipEntityCap`). Players are excluded (they are already in [Frame.snaps]). Fail-open: a
      * per-entity read error skips that entity.
      */
-    internal fun buildEntitySnaps(world: ClientWorld, self: net.minecraft.client.network.ClientPlayerEntity?, cfg: IustitiaConfig): List<EntitySnap> {
+    internal fun buildEntitySnaps(world: ClientLevel, self: net.minecraft.client.player.LocalPlayer?, cfg: IustitiaConfig): List<EntitySnap> {
         if (!entityCaptureEnabled(cfg)) return emptyList()
         val cap = entityCap(cfg)
         if (cap <= 0) return emptyList()
@@ -534,9 +534,9 @@ object ReplayBuffer {
         try {
             // Only types that can produce a snap are candidates, so the cap and the sort below are
             // spent on entities that will actually be captured (a dropped item / arrow never is).
-            for (entity in world.entities) {
+            for (entity in world.entitiesForRendering()) {
                 if (entity === self) continue
-                if (entity is PlayerEntity) continue
+                if (entity is Player) continue
                 if (entity.isRemoved) continue
                 if (!isCapturable(entity)) continue
                 val dx = entity.x - sx; val dy = entity.y - sy; val dz = entity.z - sz
@@ -582,22 +582,22 @@ object ReplayBuffer {
     /** Mirrors the type filter in [buildEntitySnap] / [buildNonLivingEntitySnap]. */
     private fun isCapturable(e: Entity): Boolean =
         e is LivingEntity ||
-            e is net.minecraft.entity.vehicle.BoatEntity ||
-            e is net.minecraft.entity.vehicle.ChestBoatEntity ||
-            e is net.minecraft.entity.vehicle.AbstractMinecartEntity
+            e is net.minecraft.world.entity.vehicle.boat.Boat ||
+            e is net.minecraft.world.entity.vehicle.boat.ChestBoat ||
+            e is net.minecraft.world.entity.vehicle.minecart.AbstractMinecart
 
     private fun snapOf(e: Entity): EntitySnap? =
         if (e is LivingEntity) buildEntitySnap(e) else buildNonLivingEntitySnap(e)
 
     private fun buildEntitySnap(e: LivingEntity): EntitySnap? = try {
         val u = e.uuid
-        val typeId = try { Registries.ENTITY_TYPE.getId(e.type).toString() } catch (_: Throwable) { return null }
+        val typeId = try { BuiltInRegistries.ENTITY_TYPE.getId(e.type).toString() } catch (_: Throwable) { return null }
         if (typeId.isEmpty()) return null
         EntitySnap(
             typeId,
             u.mostSignificantBits, u.leastSignificantBits,
             e.x.toFloat(), e.y.toFloat(), e.z.toFloat(),
-            e.bodyYaw, e.headYaw, e.pitch,
+            e.yBodyRot, e.yHeadRot, e.getXRot(),
             poseOfLiving(e),
             (try { e.hurtTime } catch (_: Throwable) { 0 }).toByte(),
             try { e.getHealth() } catch (_: Throwable) { 20f },
@@ -607,30 +607,30 @@ object ReplayBuffer {
 
     /** Non-living captures (boats / minecarts) have no pose/health — stand + full health. Only those
      *  two vehicle families are captured (a dropped item / arrow / painting is noise). */
-    private fun buildNonLivingEntitySnap(e: net.minecraft.entity.Entity): EntitySnap? = try {
-        if (e !is net.minecraft.entity.vehicle.BoatEntity &&
-            e !is net.minecraft.entity.vehicle.ChestBoatEntity &&
-            e !is net.minecraft.entity.vehicle.AbstractMinecartEntity) {
+    private fun buildNonLivingEntitySnap(e: net.minecraft.world.entity.Entity): EntitySnap? = try {
+        if (e !is net.minecraft.world.entity.vehicle.boat.Boat &&
+            e !is net.minecraft.world.entity.vehicle.boat.ChestBoat &&
+            e !is net.minecraft.world.entity.vehicle.minecart.AbstractMinecart) {
             return null
         }
         val u = e.uuid
-        val typeId = try { Registries.ENTITY_TYPE.getId(e.type).toString() } catch (_: Throwable) { return null }
+        val typeId = try { BuiltInRegistries.ENTITY_TYPE.getId(e.type).toString() } catch (_: Throwable) { return null }
         if (typeId.isEmpty()) return null
         EntitySnap(
             typeId,
             u.mostSignificantBits, u.leastSignificantBits,
             e.x.toFloat(), e.y.toFloat(), e.z.toFloat(),
-            e.yaw, e.yaw, e.pitch, POSE_STAND,
+            e.getYRot(), e.getYRot(), e.getXRot(), POSE_STAND,
         )
     } catch (_: Throwable) { null }
 
     private fun poseOfLiving(e: LivingEntity): Byte = try {
         when {
-            e.isGliding -> POSE_GLIDE
+            e.isFallFlying() -> POSE_GLIDE
             e.isSwimming -> POSE_SWIM
-            e.isCrawling -> POSE_CRAWL
-            e.hasVehicle() -> POSE_SIT
-            e.isSneaking -> POSE_SNEAK
+            e.isVisuallyCrawling() -> POSE_CRAWL
+            e.isPassenger() -> POSE_SIT
+            e.isCrouching() -> POSE_SNEAK
             else -> POSE_STAND
         }
     } catch (_: Throwable) { POSE_STAND }

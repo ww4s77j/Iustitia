@@ -4,14 +4,14 @@ import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.tracking.EntityTrackerManager
-import net.minecraft.client.MinecraftClient
-import net.minecraft.sound.SoundEvents
+import net.minecraft.client.Minecraft
+import net.minecraft.sounds.SoundEvents
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Routes violations to the local chat hud with per-(player, check) throttling and a join-grace
- * suppression. **Local-only**: writes straight to [net.minecraft.client.gui.hud.ChatHud.addMessage]
+ * suppression. **Local-only**: writes straight to [net.minecraft.client.gui.components.ChatComponent.addClientSystemMessage]
  * — no packet is ever sent to the server. Fail-open: any error here must not propagate.
  *
  * Phase 2 pipeline: alerts are buffered per player and flushed either immediately (when batching is
@@ -152,8 +152,8 @@ object AlertManager {
                 } else {
                     AlertFormatter.formatBatch(batch.name, parts, worstBand, windowSec, lagging, cfg.compactMode, uuid)
                 }
-                val client = MinecraftClient.getInstance()
-                client.execute { client.inGameHud?.chatHud?.addMessage(text) }
+                val client = Minecraft.getInstance()
+                client.execute { client.gui.hud.chat.addClientSystemMessage(text) }
 
                 // 6. audio cue (gated by the same mute/preset rules — a muted/preset-dropped alert
                 //    is silent too).
@@ -192,14 +192,14 @@ object AlertManager {
             val cfg = ConfigManager.config
             val tier = FlagHistory.tierFor(uuid)
             val vol = cfg.audioVolume.toFloat()
-            val client = MinecraftClient.getInstance()
+            val client = Minecraft.getInstance()
             client.execute {
                 try {
                     val player = client.player ?: return@execute
                     when (tier) {
-                        FlagHistory.Tier.RED -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(), vol, 0.8f)
-                        FlagHistory.Tier.YELLOW -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(), vol, 1.2f)
-                        FlagHistory.Tier.GREEN -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_HARP.value(), vol * 0.6f, 1.0f)
+                        FlagHistory.Tier.RED -> player.playSound(SoundEvents.NOTE_BLOCK_BASS.value(), vol, 0.8f)
+                        FlagHistory.Tier.YELLOW -> player.playSound(SoundEvents.NOTE_BLOCK_PLING.value(), vol, 1.2f)
+                        FlagHistory.Tier.GREEN -> player.playSound(SoundEvents.NOTE_BLOCK_HARP.value(), vol * 0.6f, 1.0f)
                     }
                 } catch (_: Throwable) {}
             }

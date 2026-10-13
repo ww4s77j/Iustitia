@@ -139,7 +139,7 @@ class HitsWithoutSwingCheck : Check() {
             if (cand.uuid == victim.uuid) continue
             val cctx = contextOf(cand.uuid) as HitsWithoutSwingContext
             if (cctx.lastSwingTick == Int.MIN_VALUE || sig.tick - cctx.lastSwingTick > SWING_RECENCY) continue
-            val dsq = cand.pos.squaredDistanceTo(victim.pos)
+            val dsq = cand.pos.distanceToSqr(victim.pos)
             if (dsq < nearestSq) { nearestSq = dsq; nearest = cand }
         }
         return nearest

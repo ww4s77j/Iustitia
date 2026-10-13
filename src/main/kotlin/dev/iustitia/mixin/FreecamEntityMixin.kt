@@ -1,8 +1,8 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.MinecraftClient
-import net.minecraft.entity.Entity
+import net.minecraft.client.Minecraft
+import net.minecraft.world.entity.Entity
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -39,14 +39,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  * ## Runtime-only-verifiable
  *
  * The `Entity.changeLookDirection(double, double)` target is verified against the named 1.21.11 jar
- * (`public void changeLookDirection(double, double)` on `net.minecraft.entity.Entity`; mojmap `turn`).
+ * (`public void changeLookDirection(double, double)` on `net.minecraft.world.entity.Entity`; mojmap `turn`).
  * `defaultRequire: 1` means a mismatch fails launch — the build can't confirm mixin-apply, only a live
  * client run can.
  */
 @Mixin(Entity::class)
 class FreecamEntityMixin {
 
-    @Inject(method = ["changeLookDirection"], at = [At("HEAD")], cancellable = true)
+    @Inject(method = ["turn"], at = [At("HEAD")], cancellable = true)
     // Mixin merges this class into Entity at runtime, so `this as Entity` (below) is sound at
     // runtime even though Kotlin's static analysis can't see the merge and warns it can never
     // succeed. Suppress that false positive rather than weakening the cast.
@@ -55,7 +55,7 @@ class FreecamEntityMixin {
         try {
             if (!ReplayState.active || ReplayState.cameraMode != ReplayState.CameraMode.FREECAM) return
             val self = this as Entity
-            if (self !== MinecraftClient.getInstance().player) return
+            if (self !== Minecraft.getInstance().player) return
             if (!ReplayState.freecamActive) return
             // Apply the mouse delta to the freecam pose (vanilla-scaled + pitch-clamped inside
             // applyFreecamLook) and cancel the player's own turn — the player's yaw/pitch stays frozen

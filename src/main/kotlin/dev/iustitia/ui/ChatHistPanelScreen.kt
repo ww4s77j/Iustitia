@@ -1,16 +1,16 @@
 package dev.iustitia.ui
 
 import dev.iustitia.chathist.ChatHistory
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.text.Text
+import net.minecraft.client.gui.GuiGraphicsExtractor
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.network.chat.Component
 import java.text.SimpleDateFormat
 import java.util.Date
 
 /**
  * `/ius chathist panel ...` — a narrow side-panel overlay that reuses the same chrome + render
  * layout as [TranscriptPanelScreen] (right-edge panel, same `0xCC101010` background, same
- * `§8[§diustitia§8]` header, `drawTextWithShadow` rows, `shouldPause = false` so the game keeps
+ * `§8[§diustitia§8]` header, `drawTextWithShadow` rows, `isPauseScreen = false` so the game keeps
  * running) but draws captured chat rows instead of flag events. The panel is a bit wider than the
  * transcript panel (~220px vs ~150px) and wraps long rows to the panel width, so a long message or
  * a long username continues on the next line instead of clipping off the right edge. Refreshed
@@ -29,11 +29,11 @@ class ChatHistPanelScreen(
     private val parent: Screen?,
 ) : Screen(TITLE) {
 
-    override fun shouldPause(): Boolean = false
+    override fun isPauseScreen(): Boolean = false
 
     override fun init() { try {} catch (_: Throwable) {} }
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+    override fun extractRenderState(context: GuiGraphicsExtractor, mouseX: Int, mouseY: Int, delta: Float) {
         try {
             val w = this.width
             // A bit wider than the transcript panel (which is ~150px) so usernames + wrapped
@@ -42,17 +42,17 @@ class ChatHistPanelScreen(
             val panelW = minOf(220, w / 4)
             val x0 = w - panelW
             context.fill(x0, 0, w, this.height, BG)
-            super.render(context, mouseX, mouseY, delta)
-            val tr = this.textRenderer
+            super.extractRenderState(context, mouseX, mouseY, delta)
+            val tr = this.font
             var y = 6
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8]"), x0 + 4, y, WHITE); y += 11
-            context.drawTextWithShadow(tr, Text.literal("§8chathist"), x0 + 4, y, WHITE); y += 11
-            context.drawTextWithShadow(tr, Text.literal("§f$subtitle"), x0 + 4, y, WHITE); y += 13
+            context.text(tr, Component.literal("§8[§diustitia§8]"), x0 + 4, y, WHITE); y += 11
+            context.text(tr, Component.literal("§8chathist"), x0 + 4, y, WHITE); y += 11
+            context.text(tr, Component.literal("§f$subtitle"), x0 + 4, y, WHITE); y += 13
             val rows = rowsProvider().take(limit)
-            context.drawTextWithShadow(tr, Text.literal("§8last ${rows.size} msg:"), x0 + 4, y, WHITE); y += 11
+            context.text(tr, Component.literal("§8last ${rows.size} msg:"), x0 + 4, y, WHITE); y += 11
             val maxW = panelW - 8
             if (rows.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7(no messages)"), x0 + 4, y, WHITE)
+                context.text(tr, Component.literal("§7(no messages)"), x0 + 4, y, WHITE)
             } else {
                 for (r in rows) {
                     val ts = try { FMT.format(Date(r.wallClockMs)) } catch (_: Throwable) { "??:??:??" }
@@ -60,10 +60,10 @@ class ChatHistPanelScreen(
                     // Wrap to the panel width so a long message (or a long username) continues on
                     // the next line instead of clipping off the right edge. The timestamp + name
                     // stay on the first wrapped line; continuation lines sit flush-left under them.
-                    val wrapped = tr.wrapLines(Text.literal(full), maxW)
+                    val wrapped = tr.split(Component.literal(full), maxW)
                     for (ln in wrapped) {
                         if (y > this.height - 12) return
-                        context.drawTextWithShadow(tr, ln, x0 + 4, y, WHITE)
+                        context.text(tr, ln, x0 + 4, y, WHITE)
                         y += 11
                     }
                     y += 1 // small gap between messages for readability
@@ -71,16 +71,19 @@ class ChatHistPanelScreen(
             }
         } catch (_: Throwable) {
             try {
-                val tr = this.textRenderer
-                context.drawTextWithShadow(tr, Text.literal("§7(unavailable)"), 4, 4, WHITE)
+                val tr = this.font
+                context.text(tr, Component.literal("§7(unavailable)"), 4, 4, WHITE)
             } catch (_: Throwable) {}
         }
     }
 
-    override fun close() { client?.setScreen(parent) }
+    override fun onClose() {
+        val p = parent
+        if (p != null) minecraft.setScreenAndShow(p) else minecraft.gui.setScreen(null)
+    }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — chathist")
+        private val TITLE = Component.literal("Iustitia — chathist")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
         private val FMT = SimpleDateFormat("HH:mm:ss")

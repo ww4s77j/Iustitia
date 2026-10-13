@@ -2,11 +2,10 @@ package dev.iustitia.render
 
 import dev.iustitia.replay.ReplayState
 import dev.iustitia.replay.TerrainSnapshot
-import net.minecraft.client.render.VertexConsumer
-import net.minecraft.client.render.VertexRendering
-import net.minecraft.client.util.math.MatrixStack
-import net.minecraft.util.math.Box
-import net.minecraft.util.shape.VoxelShapes
+import net.minecraft.client.renderer.SubmitNodeCollector
+import net.minecraft.client.renderer.rendertype.RenderTypes
+import com.mojang.blaze3d.vertex.PoseStack
+import net.minecraft.world.phys.shapes.Shapes
 
 /**
  * Renders the terrain shell bundled in a v5+ clip as a face-culled wireframe overlay, relocated to
@@ -32,10 +31,11 @@ import net.minecraft.util.shape.VoxelShapes
  *
  * ## Why wireframe cuboids (not filled translucent quads)
  *
- * Reuses [ReplayRenderer]'s proven [VertexRendering.drawOutline] path (depth-tested, no wallhack,
- * consistent with the ghost wireframe aesthetic). A filled translucent layer would need a custom
- * `RenderLayer` whose 1.21.11 yarn API isn't compile-safe to commit to blind; the wireframe shell
- * is the lower-risk v1 and is face-culled just the same. Filled render is a documented follow-up.
+ * Reuses [ReplayRenderer]'s proven submit-node outline path (`SubmitNodeCollector.submitShapeOutline`
+ * with `RenderTypes.LINES` — depth-tested, no wallhack, consistent with the ghost wireframe
+ * aesthetic). A filled translucent layer would need a custom `RenderType` whose 26.3 pipeline API
+ * isn't compile-safe to commit to blind; the wireframe shell is the lower-risk v1 and is face-culled
+ * just the same. Filled render is a documented follow-up.
  *
  * Read-only: adds no detection, sends no packets, edits no world.
  */
@@ -56,9 +56,10 @@ object TerrainOverlay {
     /**
      * Draw the terrain shell if a clip with terrain is playing. Call from [ReplayRenderer] inside the
      * shared origin translate (so the offset that relocates ghosts also relocates the terrain).
-     * [lines] is the same `RenderLayers.lines()` VertexConsumer the ghosts use. Fail-open.
+     * [collector] is the frame's `SubmitNodeCollector` the ghosts submit into (26.3 draws everything
+     * through submit nodes — the old `VertexConsumer` line feed is gone). Fail-open.
      */
-    fun render(matrices: MatrixStack, lines: VertexConsumer) {
+    fun render(matrices: PoseStack, collector: SubmitNodeCollector) {
         try {
             if (!ReplayState.active) return
             // A v6+ chunk-bearing clip renders its world as SOLID textured blocks via ChunkWorldRenderer,
@@ -70,7 +71,7 @@ object TerrainOverlay {
             val ts = ReplayState.terrain ?: return
             ensureBuilt(ts)
             for (b in shell) {
-                box(matrices, lines, b.x.toDouble(), b.y.toDouble(), b.z.toDouble(),
+                box(matrices, collector, b.x.toDouble(), b.y.toDouble(), b.z.toDouble(),
                     (b.x + 1).toDouble(), (b.y + 1).toDouble(), (b.z + 1).toDouble(), b.color, TERRAIN_WIDTH)
             }
         } catch (_: Throwable) {
@@ -131,15 +132,17 @@ object TerrainOverlay {
         return TerrainColors.isTransparent(name)        // glass/leaves/water/… → see-through → exposed
     }
 
-    /** Draw an axis-aligned box outline in the CURRENT matrix frame (offset 0; caller positions). */
+    /** Draw an axis-aligned box outline in the CURRENT matrix frame (offset 0; caller positions)
+     *  via the frame's submit-node line phase (`submitShapeOutline` / `RenderTypes.LINES` — the 26.3
+     *  replacement for `ShapeRenderer.drawOutline`). */
     private fun box(
-        matrices: MatrixStack, lines: VertexConsumer,
+        matrices: PoseStack, collector: SubmitNodeCollector,
         minx: Double, miny: Double, minz: Double,
         maxx: Double, maxy: Double, maxz: Double,
         color: Int, width: Float,
     ) {
-        val shape = VoxelShapes.cuboid(Box(minx, miny, minz, maxx, maxy, maxz))
-        VertexRendering.drawOutline(matrices, lines, shape, 0.0, 0.0, 0.0, color, width)
+        val shape = Shapes.box(minx, miny, minz, maxx, maxy, maxz)
+        collector.submitShapeOutline(matrices, shape, RenderTypes.LINES, color, width, false)
     }
 
     /** Pack a block pos to a long key for the grid HashMap. x/z 24 bits (±8M), y 16 bits (±32k) —

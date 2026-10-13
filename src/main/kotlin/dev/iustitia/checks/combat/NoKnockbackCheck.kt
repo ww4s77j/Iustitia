@@ -13,7 +13,7 @@ import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.LagCombatCorrelator
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 import java.util.UUID
 import kotlin.math.hypot
 
@@ -222,7 +222,7 @@ class NoKnockbackCheck : Check() {
     private fun evaluate(tp: TrackedPlayer, ctx: NoKnockbackContext, tick: Int, observed: Int = WINDOW) {
         if (tp.inVehicle || tp.gliding || tp.riptide) return
         if (tick - tp.lastTeleportTick < 5) return
-        // Shield exemption: a player holding up a shield (UseAction.BLOCK on main/off hand) takes
+        // Shield exemption: a player holding up a shield (ItemUseAnimation.BLOCK on main/off hand) takes
         // NO knockback from a sprint hit — vanilla shields negate sprint-KB. Without this gate a
         // legit blocker's ~0 windowDisp trips the under-threshold NoKB test → false flag. (A
         // cheater toggling shield while hit is also exempted here, but shield use is visibly
@@ -233,7 +233,7 @@ class NoKnockbackCheck : Check() {
         if (tick - EntityTrackerManager.lastServerLagTick <= 4 ||
             tick - EntityTrackerManager.lastLagBurstTick <= 2
         ) return
-        val world = MinecraftClient.getInstance().world ?: return
+        val world = Minecraft.getInstance().level ?: return
         val bx = Math.floor(tp.pos.x).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
         val footY = Math.floor(tp.pos.y).toInt()

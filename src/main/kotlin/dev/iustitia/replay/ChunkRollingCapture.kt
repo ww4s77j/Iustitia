@@ -1,6 +1,6 @@
 package dev.iustitia.replay
 
-import net.minecraft.client.MinecraftClient
+import net.minecraft.client.Minecraft
 
 /**
  * Incremental, per-segment chunk snapshotting. Instead of one big synchronous [ChunkCapture.capture]
@@ -95,7 +95,7 @@ object ChunkRollingCapture {
     /** Capture up to [PER_TICK] not-yet-captured chunks around the player, nearest-first. */
     fun tickCapture(segmentId: Int, pcx: Int, pcz: Int, radius: Int) {
         try {
-            val world = MinecraftClient.getInstance().world ?: return
+            val world = Minecraft.getInstance().level ?: return
             val st = store.getOrPut(segmentId) { HashMap() }
             val cap = rollingChunkCap()  // once per tick, not per chunk attempt
             // Evict here, not only at a segment boundary. The budget was checked per capture attempt
@@ -146,7 +146,7 @@ object ChunkRollingCapture {
 
     private fun tryCapture(
         st: HashMap<Long, ChunkSnapshot.ChunkRec>,
-        world: net.minecraft.client.world.ClientWorld,
+        world: net.minecraft.client.multiplayer.ClientLevel,
         cx: Int, cz: Int,
         cap: Int,
     ): Int {

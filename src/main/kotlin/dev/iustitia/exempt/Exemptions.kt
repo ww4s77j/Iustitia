@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
  * <player>` for that. Exemptions are NOT cleared on world change (a modder's trusted-player list
  * shouldn't wipe between servers), unlike the per-session detection state.
  *
- * Persists to `%APPDATA%/.iustitia/exemptions.json` via [dev.iustitia.persistence.PersistenceManager]
+ * Persists to `.minecraft/.iustitia/exemptions.json` via [dev.iustitia.persistence.PersistenceManager]
  * when the persistence toggle is on (mirrors [dev.iustitia.persistence.NoteStore]); session-only
  * otherwise. All paths fail-open. **Local-only** — nothing is sent to the server.
  */

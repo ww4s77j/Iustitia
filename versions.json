@@ -1,0 +1,8 @@
+{
+  "$schema": "https://stonecutter.kikugie.dev/settings-schema/latest.json",
+  "vcs": "26.3",
+  "versions": [
+    "1.21.11",
+    "26.3"
+  ]
+}

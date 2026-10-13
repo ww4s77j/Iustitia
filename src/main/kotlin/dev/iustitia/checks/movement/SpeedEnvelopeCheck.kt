@@ -7,9 +7,9 @@ import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.block.BlockState
-import net.minecraft.block.Blocks
-import net.minecraft.client.MinecraftClient
+import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.level.block.Blocks
+import net.minecraft.client.Minecraft
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.ceil
@@ -135,7 +135,7 @@ class SpeedEnvelopeCheck : Check() {
                 pushFront(ctx.bpsWindow, offsetH * 20.0, 6)
                 // cap raise on ice/slime/soul-sand (chunk-gated via WorldQueries)
                 var effectiveCap = cap * speedFactor
-                val world = MinecraftClient.getInstance().world
+                val world = Minecraft.getInstance().level
                 if (world != null) {
                     // Math.floor, not toInt(): truncation toward zero picks the wrong column at
                     // negative coords (a -0.4 foot block would be sampled at y/x/z 0, not -1).
@@ -212,7 +212,7 @@ class SpeedEnvelopeCheck : Check() {
 
     /** The block state under the player's feet (for slipperiness); null on unload/error. */
     private fun worldBlockUnder(tp: TrackedPlayer): BlockState? = try {
-        val world = MinecraftClient.getInstance().world ?: return null
+        val world = Minecraft.getInstance().level ?: return null
         val bx = Math.floor(tp.pos.x).toInt()
         val by = Math.floor(tp.pos.y - 1.0).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
@@ -224,9 +224,9 @@ class SpeedEnvelopeCheck : Check() {
     /** Slipperiness of the block under the player (default 0.6; ice 0.98; slime 0.8). */
     private fun slipperiness(state: BlockState?): Double = when {
         state == null -> DEFAULT_SLIP
-        state.isOf(Blocks.ICE) || state.isOf(Blocks.BLUE_ICE) ||
-            state.isOf(Blocks.PACKED_ICE) || state.isOf(Blocks.FROSTED_ICE) -> ICE_SLIP
-        state.isOf(Blocks.SLIME_BLOCK) -> SLIME_SLIP
+        state.`is`(Blocks.ICE) || state.`is`(Blocks.BLUE_ICE) ||
+            state.`is`(Blocks.PACKED_ICE) || state.`is`(Blocks.FROSTED_ICE) -> ICE_SLIP
+        state.`is`(Blocks.SLIME_BLOCK) -> SLIME_SLIP
         else -> DEFAULT_SLIP
     }
 

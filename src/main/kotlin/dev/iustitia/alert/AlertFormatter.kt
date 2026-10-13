@@ -2,10 +2,10 @@ package dev.iustitia.alert
 
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.info.CheckInfo
-import net.minecraft.text.ClickEvent
-import net.minecraft.text.HoverEvent
-import net.minecraft.text.Style
-import net.minecraft.text.Text
+import net.minecraft.network.chat.ClickEvent
+import net.minecraft.network.chat.HoverEvent
+import net.minecraft.network.chat.Style
+import net.minecraft.network.chat.Component
 import java.util.UUID
 import kotlin.math.ceil
 
@@ -29,7 +29,7 @@ object AlertFormatter {
 
     fun sevChar(b: Int): Char = when (b) { 2 -> 'c'; 1 -> '6'; else -> 'e' }
 
-    fun format(name: String, check: String, vl: Double, setbackVL: Double, uuid: UUID, checkId: String): Text {
+    fun format(name: String, check: String, vl: Double, setbackVL: Double, uuid: UUID, checkId: String): Component {
         val sev = sevChar(band(vl, setbackVL))
         val count = ceil(vl).toInt().coerceAtLeast(1)
         val raw = buildString {
@@ -45,11 +45,11 @@ object AlertFormatter {
             append(count)
             append(')')
         }
-        val base = Text.literal(raw)
+        val base = Component.literal(raw)
         return try {
             val hover = buildHover(uuid, checkId, check)
             val click = ClickEvent.RunCommand("/ius hist $name")
-            base.styled { s: Style ->
+            base.withStyle { s: Style ->
                 s.withClickEvent(click).withHoverEvent(HoverEvent.ShowText(hover))
             }
         } catch (_: Throwable) {
@@ -67,7 +67,7 @@ object AlertFormatter {
     fun formatBatch(
         name: String, parts: List<String>, worstBand: Int, windowSec: Int,
         lag: Boolean, compact: Boolean, uuid: UUID,
-    ): Text {
+    ): Component {
         val sev = sevChar(worstBand)
         val raw = buildString {
             if (lag) append("§7[lag] ")
@@ -81,20 +81,20 @@ object AlertFormatter {
             append(windowSec)
             append("s)")
         }
-        val base = Text.literal(raw)
+        val base = Component.literal(raw)
         if (compact) return base
         return try {
-            val hover = Text.empty()
-                .append(Text.literal("§7${FlagHistory.confidenceExplanation(uuid)}"))
-                .append(Text.literal("\n§7click for flag history"))
-            base.styled { s: Style ->
+            val hover = Component.empty()
+                .append(Component.literal("§7${FlagHistory.confidenceExplanation(uuid)}"))
+                .append(Component.literal("\n§7click for flag history"))
+            base.withStyle { s: Style ->
                 s.withClickEvent(ClickEvent.RunCommand("/ius hist $name")).withHoverEvent(HoverEvent.ShowText(hover))
             }
         } catch (_: Throwable) { base }
     }
 
     /** Compact one-line alert (no hover tail, no severity bar) for [IustitiaConfig.compactMode]. */
-    fun formatCompact(name: String, check: String, vl: Double, setbackVL: Double, uuid: UUID, checkId: String): Text {
+    fun formatCompact(name: String, check: String, vl: Double, setbackVL: Double, uuid: UUID, checkId: String): Component {
         val sev = sevChar(band(vl, setbackVL))
         val count = ceil(vl).toInt().coerceAtLeast(1)
         val raw = buildString {
@@ -106,19 +106,19 @@ object AlertFormatter {
             append(" §7vl")
             append(count)
         }
-        val base = Text.literal(raw)
+        val base = Component.literal(raw)
         return try {
-            base.styled { s: Style -> s.withClickEvent(ClickEvent.RunCommand("/ius hist $name")) }
+            base.withStyle { s: Style -> s.withClickEvent(ClickEvent.RunCommand("/ius hist $name")) }
         } catch (_: Throwable) { base }
     }
 
-    private fun buildHover(uuid: UUID, checkId: String, checkLabel: String): Text {
-        val lines = Text.empty()
-        lines.append(Text.literal("§7${CheckInfo.describe(checkId)}"))
+    private fun buildHover(uuid: UUID, checkId: String, checkLabel: String): Component {
+        val lines = Component.empty()
+        lines.append(Component.literal("§7${CheckInfo.describe(checkId)}"))
         try {
             val alerts = FlagHistory.sessionAlertCount(uuid)
             val checkFlags = FlagHistory.flagsForCheck(uuid, checkId).size
-            lines.append(Text.literal("\n§7alerts: §f$alerts §7| §7$checkLabel flags: §f$checkFlags"))
+            lines.append(Component.literal("\n§7alerts: §f$alerts §7| §7$checkLabel flags: §f$checkFlags"))
         } catch (_: Throwable) {
             // counts unavailable — skip the line
         }
@@ -135,14 +135,14 @@ object AlertFormatter {
                         if (ev.measurement != null || ev.threshold != null)
                             "${ev.measurement ?: "?"}/${ev.threshold ?: "?"}" else null)
                       .joinToString(" · ")
-                if (why.isNotEmpty()) lines.append(Text.literal("\n§bwhy §7$why"))
+                if (why.isNotEmpty()) lines.append(Component.literal("\n§bwhy §7$why"))
             }
         } catch (_: Throwable) {}
         // FP-cause hint (Phase 2 #18 text version): one benign-cause line so users learn when not
         // to hackusate. The standalone HUD note is a deferred Phase B render piece.
-        try { dev.iustitia.info.FpHint.hint(checkId)?.let { lines.append(Text.literal("\n§8FP note: §7$it")) } } catch (_: Throwable) {}
-        try { lines.append(Text.literal("\n§7${FlagHistory.confidenceExplanation(uuid)}")) } catch (_: Throwable) {}
-        lines.append(Text.literal("\n${CheckInfo.SEVERITY_LEGEND}"))
+        try { dev.iustitia.info.FpHint.hint(checkId)?.let { lines.append(Component.literal("\n§8FP note: §7$it")) } } catch (_: Throwable) {}
+        try { lines.append(Component.literal("\n§7${FlagHistory.confidenceExplanation(uuid)}")) } catch (_: Throwable) {}
+        lines.append(Component.literal("\n${CheckInfo.SEVERITY_LEGEND}"))
         return lines
     }
 }

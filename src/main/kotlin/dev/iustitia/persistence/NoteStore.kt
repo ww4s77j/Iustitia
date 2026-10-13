@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * In-memory moderator-notation store for `/ius note`. Notes follow a player for the rest of the
  * session regardless of the persistence toggle — the toggle only controls whether they're written
- * to `%APPDATA%/.iustitia/notes.json` (via [PersistenceManager]) so they survive a restart.
+ * to `.minecraft/.iustitia/notes.json` (via [PersistenceManager]) so they survive a restart.
  *
  * Categories are the four the user specified: `closet` (subtle/low-confidence cheat), `blatant`
  * (obvious), `needsReview` (watch but undecided), `legit` (cleared — suppress future hackusation).

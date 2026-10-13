@@ -8,7 +8,7 @@ import com.google.gson.JsonParser
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import net.fabricmc.loader.api.FabricLoader
-import net.minecraft.util.math.Vec3d
+import net.minecraft.world.phys.Vec3
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -16,8 +16,8 @@ import java.util.UUID
 private const val DEBOUNCE_MS = 500L
 
 /**
- * Roaming persistence store for the Phase 2 operability features: moderator notes, the tier+flag
- * history, evidence snapshots, and transcript/evidence exports. Writes to `%APPDATA%/.iustitia` on
+ * Game-dir persistence store for the Phase 2 operability features: moderator notes, the tier+flag
+ * history, evidence snapshots, and transcript/evidence exports. Writes to `.minecraft/.iustitia` on
  * Windows (so Modrinth/multi-instance users find one dir regardless of instance path) and to the
  * game-dir `.iustitia` elsewhere. Everything is gated by [IustitiaConfig.persistenceEnabled] — when
  * off, nothing is read or written and the session is in-memory only as before.
@@ -35,12 +35,8 @@ object PersistenceManager {
 
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
-    /** Roaming dir: `%APPDATA%/.iustitia` on Windows, `<gameDir>/.iustitia` elsewhere. */
-    private val dataDir: Path by lazy {
-        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
-        if (appdata != null) Path.of(appdata).resolve(".iustitia")
-        else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-    }
+    /** Game-dir data dir: `<gameDir>/.iustitia` - everything stays inside the game instance's own folder. */
+    private val dataDir: Path by lazy { FabricLoader.getInstance().gameDir.resolve(".iustitia") }
     private val notesPath: Path get() = dataDir.resolve("notes.json")
     private val historyPath: Path get() = dataDir.resolve("history.json")
     private val exemptionsPath: Path get() = dataDir.resolve("exemptions.json")
@@ -193,7 +189,7 @@ object PersistenceManager {
         if (o.has("evidence") && !o.get("evidence").isJsonNull) {
             val e = o.getAsJsonObject("evidence")
             val pos = if (e.has("pos") && !e.get("pos").isJsonNull) {
-                val pa = e.getAsJsonArray("pos"); Vec3d(pa[0].asDouble, pa[1].asDouble, pa[2].asDouble)
+                val pa = e.getAsJsonArray("pos"); Vec3(pa[0].asDouble, pa[1].asDouble, pa[2].asDouble)
             } else null
             ev = dev.iustitia.history.Evidence(
                 subLabel = e.get("subLabel")?.takeIf { !it.isJsonNull }?.asString,
@@ -252,7 +248,7 @@ object PersistenceManager {
     }
 
     // ---- one-off files (snapshots + exports) ----
-    /** The `snapshots/` dir as a [java.io.File] for [net.minecraft.client.util.ScreenshotRecorder],
+    /** The `snapshots/` dir as a [java.io.File] for [net.minecraft.client.Screenshot],
      *  created if missing. Null when persistence is off (caller bails → no PNG, chat/json summary
      *  still land). Called on the client thread. */
     fun screenshotsDirFile(): java.io.File? = try {
@@ -264,7 +260,7 @@ object PersistenceManager {
      *  half-written snapshot). Returns true iff the file landed, so the caller can report a disk
      *  failure honestly instead of an unconditional success. The write is synchronous on the
      *  caller's thread: these are tiny one-off JSON files (a few KB) called from command handlers
-     *  / the snapshot keybind, and the OLD `MinecraftClient.execute {}` ran inline on the client
+     *  / the snapshot keybind, and the OLD `Minecraft.execute {}` ran inline on the client
      *  thread anyway (execute on the owning thread is a no-hop direct call) — plus it silently
      *  no-ops once the client executor shuts down at exit, which a direct write never does. */
     fun saveSnapshot(name: String, json: String): Boolean {

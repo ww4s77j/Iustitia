@@ -28,7 +28,7 @@ class EventBus {
         // buffers), so off-thread publishes are handed to the tick driver's defer queue and
         // dispatched on the client thread at the next tick start (events carry explicit
         // tick stamps; the ≤1-tick latency does not affect any window). On-thread publishes
-        // dispatch inline, unchanged — a MinecraftClient.execute{} hop would run inline here
+        // dispatch inline, unchanged — a Minecraft.execute{} hop would run inline here
         // anyway (client==render thread on 1.21.11).
         if (!dev.iustitia.Iustitia.onClientThread()) {
             dev.iustitia.Iustitia.defer { publish(event) }

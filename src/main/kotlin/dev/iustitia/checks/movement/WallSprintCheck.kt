@@ -7,8 +7,8 @@ import dev.iustitia.math.Vectors
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.world.ClientWorld
+import net.minecraft.client.Minecraft
+import net.minecraft.client.multiplayer.ClientLevel
 import java.util.UUID
 import kotlin.math.hypot
 import dev.iustitia.checks.LagWindows
@@ -61,7 +61,7 @@ class WallSprintCheck : Check() {
             // usefully observable. Reset (like the chunk-unloaded branch) so a stale streak
             // can't flag on re-approach.
             if (BlockLookupBudget.beyondObserveRange(tp)) { ctx.streak = 0; return }
-            val world = MinecraftClient.getInstance().world
+            val world = Minecraft.getInstance().level
             val bx = Math.floor(tp.pos.x).toInt()
             val bz = Math.floor(tp.pos.z).toInt()
             if (world == null || !tp.chunkLoadedCached(world, tick, bx, bz)) { ctx.streak = 0; return }
@@ -98,7 +98,7 @@ class WallSprintCheck : Check() {
      *  stationary against the wall) the verdict is stable, and 1-tick staleness on other motion
      *  is absorbed by the SUSTAIN window + the forward-speed approach exemption. */
     private fun wallAheadCached(
-        world: ClientWorld?, ctx: WallSprintContext,
+        world: ClientLevel?, ctx: WallSprintContext,
         x: Double, y: Double, z: Double, dx: Double, dz: Double, tick: Int,
     ): Boolean {
         if (ctx.wallAheadTick == -10000 || tick - ctx.wallAheadTick >= BlockLookupBudget.RATE_LIMIT_N) {

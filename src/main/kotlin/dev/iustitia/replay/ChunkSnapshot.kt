@@ -12,7 +12,7 @@ package dev.iustitia.replay
  * Each chunk stores its non-empty sections as a **palette + index array**: a section is
  * `(sectionY, palette: List<String>, data: ByteArray)` where `palette` is the block registry id — or,
  * since v7, the full state string for a stateful block (`"minecraft:stairs[facing=east,half=top]"` —
- * `BlockArgumentParser`-compatible form, written by [ChunkCapture.stateKey]; propertyless blocks keep
+ * `BlockStateParser`-compatible form, written by [ChunkCapture.stateKey]; propertyless blocks keep
  * the bare id `"minecraft:stone"`, byte-identical to pre-v7). Names, not numeric state ids, so a
  * clip is portable across server versions and dimensions. `data` is 4096 palette-index entries (1
  * byte each when the palette has ≤ 256 entries, else 2 bytes big-endian). Air is a normal palette

@@ -77,7 +77,7 @@ data class IustitiaConfig(
     var mutedPlayers: MutableList<String> = mutableListOf(),
 
     // --- Phase 2 UX / operability ---
-    /** Master toggle for the roaming persistence store (`%APPDATA%/.iustitia` on Windows, game-dir
+    /** Master toggle for the persistence store (`.minecraft/.iustitia` in the game folder,
      *  `.iustitia` elsewhere). When on, moderator notes, the tier+flag history, evidence snapshots,
      *  and transcript/evidence exports are saved across sessions; when off, everything is
      *  in-memory session-only as before. Detection/tiering run regardless. */
@@ -114,7 +114,7 @@ data class IustitiaConfig(
     /** Phase B HUD: draw a small top-left `⚠ lag` indicator while a server-lag burst is recent, so a
      *  moderator sees WHY alerts are being softened (or distance flagged) without opening a screen.
      *  Reuses [dev.iustitia.tracking.EntityTrackerManager.lastServerLagTick]/lastLagBurstTick — no TPS
-     *  estimator. Pure HUD text (HudRenderCallback), no world render. Display-only. */
+     *  estimator. Pure HUD text (HudElementRegistry), no world render. Display-only. */
     var lagHudIcon: Boolean = true,
     /** Phase B HUD: draw a compact panel near the crosshair showing the looked-at player's tier glyph +
      *  confidence score + the one-line "why this tier" explanation + the FP hint for their top check.
@@ -166,9 +166,9 @@ data class IustitiaConfig(
      *  the ghosts on top of the live players instead. Render-only — the live game keeps running. */
     var replayHideLive: Boolean = true,
     /** Render replay/clip ghosts as the actual Minecraft player MODEL with each player's REAL skin
-     *  (resolved per-UUID from the tab-list [net.minecraft.client.network.PlayerListEntry] vanilla keeps
+     *  (resolved per-UUID from the tab-list [net.minecraft.client.multiplayer.PlayerInfo] vanilla keeps
      *  warm; Steve/Alex fallback for players not in the tab list — see [dev.iustitia.render.ReplaySkins]),
-     *  driven via the vanilla [net.minecraft.client.render.entity.PlayerEntityRenderer] model, instead
+     *  driven via the vanilla [net.minecraft.client.renderer.entity.player.AvatarRenderer] model, instead
      *  of the tier-colored humanoid box outline. ON by default. This path drives a render-state model
      *  outside the vanilla entity pipeline, whose exact block scale + pose transforms are
      *  runtime-only-verifiable (see [dev.iustitia.render.ReplayRenderer]). The box outline remains the
@@ -242,7 +242,7 @@ data class IustitiaConfig(
      *  enchant-glint / custom-model-data components). Natively ON (the default playclip shows what the
      *  recorded players were holding/wearing); turn off in `/ius config` to revert to skin-only ghosts.
      *  Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (on). Requires a live
-     *  `OrderedRenderCommandQueue` from the world render context — if unavailable, degrades fail-open to
+     *  `SubmitNodeCollector` from the world render context — if unavailable, degrades fail-open to
      *  the skin-only ghost (features silently skip). */
     var clipGhostEquipment: Boolean = true,
     /** Capture + render **non-player entity ghosts** (mobs, animals, boats, minecarts) during

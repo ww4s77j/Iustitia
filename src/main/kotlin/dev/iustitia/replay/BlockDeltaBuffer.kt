@@ -7,7 +7,7 @@ import java.util.ArrayDeque
  * world edits (blocks placed/broken by players) on top of the captured chunk snapshot — the "the
  * world changed while you watched" layer. Ported from SnapClip.
  *
- * Fed by [dev.iustitia.mixin.WorldChunkMixin] (`WorldChunk.setBlockState` HEAD) with the block name
+ * Fed by [dev.iustitia.mixin.WorldChunkMixin] (`LevelChunk.setBlockState` HEAD) with the block name
  * before + after; consumed by [ReplayState]'s delta overlay, which applies the deltas up to the
  * playhead onto [ChunkSnapshot]'s overlay map. Only changes within the captured chunk area matter,
  * but the buffer is region-agnostic (the overlay filters by chunk key).

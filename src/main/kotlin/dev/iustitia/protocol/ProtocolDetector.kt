@@ -30,7 +30,7 @@ object ProtocolDetector {
 
     /**
      * True once the server has been seen naming the cause of a damage event in this session
-     * (an `EntityDamageS2CPacket`), i.e. once the modern damage channel is known to be in use.
+     * (an `ClientboundDamageEventPacket`), i.e. once the modern damage channel is known to be in use.
      * On such a protocol an unnamed hurt is never attributable to a player; see
      * [dev.iustitia.inference.AttackInference] and [dev.iustitia.checks.combat.HitsWithoutSwingCheck].
      *

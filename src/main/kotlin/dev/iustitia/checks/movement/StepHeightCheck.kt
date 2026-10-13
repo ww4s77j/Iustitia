@@ -7,9 +7,9 @@ import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.block.Blocks
-import net.minecraft.client.MinecraftClient
-import net.minecraft.entity.effect.StatusEffects
+import net.minecraft.world.level.block.Blocks
+import net.minecraft.client.Minecraft
+import net.minecraft.world.effect.MobEffects
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.min
@@ -55,7 +55,7 @@ class StepHeightCheck : Check() {
             if (dy > limit && dy <= 2.5 && ctx.wasGrounded &&
                 dy > jumpImpulseCeiling(tp) + JUMP_MARGIN
             ) {
-                val world = MinecraftClient.getInstance().world
+                val world = Minecraft.getInstance().level
                 if (world != null && WorldQueries.isSolidBelow(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.7)) {
                     // Slime-block trampoline: a slime bounce can launch a player >0.6 in one
                     // tick from a grounded tick, mimicking a step. Skip the flag (guard, not
@@ -67,7 +67,7 @@ class StepHeightCheck : Check() {
                         Math.floor(tp.pos.y - 0.7).toInt(),
                         Math.floor(tp.pos.z).toInt()
                     )
-                    val slimeBounce = below != null && below.isOf(Blocks.SLIME_BLOCK)
+                    val slimeBounce = below != null && below.`is`(Blocks.SLIME_BLOCK)
                     if (!slimeBounce) flag(tp, ctx, 1.0, "Step", tick)
                 }
             }
@@ -80,7 +80,7 @@ class StepHeightCheck : Check() {
      *  Reads the live entity's status effect; fail-open to -1 (→ 0.42 ceiling) on any error. */
     private fun jumpImpulseCeiling(tp: TrackedPlayer): Double {
         val amp = try {
-            tp.entity?.getStatusEffect(StatusEffects.JUMP_BOOST)?.amplifier ?: -1
+            tp.entity?.getEffect(MobEffects.JUMP_BOOST)?.amplifier ?: -1
         } catch (_: Throwable) { -1 }
         return 0.42 + 0.1 * (amp + 1)
     }

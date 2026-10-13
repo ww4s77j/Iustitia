@@ -1,12 +1,12 @@
 package dev.iustitia.mixin
 
-import net.minecraft.client.render.entity.state.PlayerEntityRenderState
-import net.minecraft.text.Text
+import net.minecraft.client.renderer.entity.state.EntityRenderState
+import net.minecraft.network.chat.Component
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.gen.Accessor
 
 /**
- * Accessor for `PlayerEntityRenderState.playerName` — the **BELOW_NAME scoreboard score line**
+ * Accessor for `AvatarRenderState.playerName` — the **BELOW_NAME scoreboard score line**
  * (e.g. `"12 HP"`), populated by `AbstractClientPlayerEntity.getMannequinName()` only within ~10
  * blocks of the camera and only when the server registered a BELOW_NAME objective. It is NOT the
  * player's name (the name is `EntityRenderState.displayName`, accessed via [EntityRenderStateAccessor]).
@@ -17,17 +17,20 @@ import org.spongepowered.asm.mixin.gen.Accessor
  * [PlayerEntityRendererMixin.iustitia_prefixNametagAtDraw].
  *
  * Target note: `@Accessor` does NOT walk the superclass chain, and `playerName` is declared on
- * `PlayerEntityRenderState` itself (unlike `displayName`, which is declared on `EntityRenderState`
- * and so targeted by [EntityRenderStateAccessor] on that base class). A `PlayerEntityRenderState`
- * instance IS-A `PlayerEntityRenderState`, so casting a player render state to this accessor works
- * (the interface is added to the subclass). `playerName` is `@Nullable`, so the accessor uses `Text?`.
+ * `AvatarRenderState` itself (unlike `displayName`, which is declared on `EntityRenderState`
+ * and so targeted by [EntityRenderStateAccessor] on that base class). A `AvatarRenderState`
+ * instance IS-A `AvatarRenderState`, so casting a player render state to this accessor works
+ * (the interface is added to the subclass). `playerName` is `@Nullable`, so the accessor uses `Component?`.
  */
-@Mixin(PlayerEntityRenderState::class)
+// 26.3 hoisted the BELOW_NAME score line to the base state and renamed it `scoreText`
+// (was `playerName` on the player state). @Accessor does not walk superclasses, so the
+// target moves to the declaring base class; AvatarRenderState IS-A EntityRenderState.
+@Mixin(EntityRenderState::class)
 interface PlayerEntityRenderStateAccessor {
 
-    @Accessor("playerName")
-    fun iustitia_getPlayerName(): Text?
+    @Accessor("scoreText")
+    fun iustitia_getPlayerName(): Component?
 
-    @Accessor("playerName")
-    fun iustitia_setPlayerName(value: Text?)
+    @Accessor("scoreText")
+    fun iustitia_setPlayerName(value: Component?)
 }

@@ -9,8 +9,8 @@ import dev.isxander.yacl3.api.controller.BooleanControllerBuilder
 import dev.isxander.yacl3.api.controller.DoubleFieldControllerBuilder
 import dev.isxander.yacl3.api.controller.EnumControllerBuilder
 import dev.isxander.yacl3.api.controller.IntegerFieldControllerBuilder
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.text.Text
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.network.chat.Component
 
 /**
  * Builds the YACL config screen for [ConfigManager.config]. Bindings read/write the
@@ -23,11 +23,11 @@ object YaclScreenBuilder {
     fun build(parent: Screen?): Screen {
         val cfg = ConfigManager.config
         val category = ConfigCategory.createBuilder()
-            .name(Text.literal("Iustitia"))
-            .tooltip(Text.literal("Client-sided anticheat — local-only chat alerts."))
+            .name(Component.literal("Iustitia"))
+            .tooltip(Component.literal("Client-sided anticheat — local-only chat alerts."))
             .group(
                 OptionGroup.createBuilder()
-                    .name(Text.literal("General"))
+                    .name(Component.literal("General"))
                     .option(bool("Enabled", "Master switch for all alerts.", { cfg.enabled }) { cfg.enabled = it })
                     .option(bool("Verbose", "Extra diagnostic logging (reserved).", { cfg.verbose }) { cfg.verbose = it })
                     .option(int("Alert throttle (ticks)", "Min ticks between repeats of the same alert.", { cfg.alertThrottleTicks }, 0, 600) { cfg.alertThrottleTicks = it })
@@ -42,7 +42,7 @@ object YaclScreenBuilder {
             )
             .group(
                 OptionGroup.createBuilder()
-                    .name(Text.literal("Display & Alerts"))
+                    .name(Component.literal("Display & Alerts"))
                     .option(bool("Nametag flag-burst pulse", "Color-pulse the tier prefix for ~3s after a fresh yellow/red flag.", { cfg.nametagBurstPulse }) { cfg.nametagBurstPulse = it })
                     .option(int("Alert level", "0 = quiet (red-severity only) · 1 = normal (orange + red) · 2 = verbose (all). Display-only.", { cfg.alertLevel }, 0, 2) { cfg.alertLevel = it })
                     .option(bool("Smart alert batching", "Collapse rapid same-player flags into one line after a quiet window.", { cfg.alertBatching }) { cfg.alertBatching = it })
@@ -60,12 +60,12 @@ object YaclScreenBuilder {
                     .option(bool("Burst sparks", "Spawn a brief tier-colored (red/yellow) particle burst at a player's eye when a fresh tier-relevant alert fires — a visual flag cue mid-fight. Client-only (no packet). Render-only.", { cfg.burstSparks }) { cfg.burstSparks = it })
                     .option(bool("Hover tooltip", "After the crosshair rests on one player for ~1.5s, show an expanded top-center banner (tier + score + why-this-tier + FP hint + most-flagged checks). Suppresses the compact crosshair panel while up. Display-only.", { cfg.hoverTooltip }) { cfg.hoverTooltip = it })
                     .option(bool("Tab-list badge", "Prepend the tier glyph (+ score when nametag-badge is on) to each OTHER player's row in the Tab list. Follows the nametag settings; never touches your own row. Display-only.", { cfg.tabListBadge }) { cfg.tabListBadge = it })
-                    .option(bool("Persist across sessions", "Save notes, tier/flag history, snapshots & exports to %APPDATA%/.iustitia. Off = session-only.", { cfg.persistenceEnabled }) { cfg.persistenceEnabled = it })
+                    .option(bool("Persist across sessions", "Save notes, tier/flag history, snapshots & exports to .minecraft/.iustitia. Off = session-only.", { cfg.persistenceEnabled }) { cfg.persistenceEnabled = it })
                     .build()
             )
             .group(
                 OptionGroup.createBuilder()
-                    .name(Text.literal("Replay & Clip"))
+                    .name(Component.literal("Replay & Clip"))
                     .option(bool("Replay capture buffer", "Keep a rolling 60s buffer of every tracked player's position + every alert, so /ius replay and /ius clip can rewind/export the last N seconds. Off = skip the per-tick capture (disables replay + clip; detection keeps running).", { cfg.replayCapture }) { cfg.replayCapture = it })
                     .option(bool("Replay hides live players", "While a replay (/ius replay or /ius playclip) is active, hide every live OTHER player so only the buffered ghost copies render — a rewind-the-world feel. Off = overlay ghosts on the live scene. Render-only.", { cfg.replayHideLive }) { cfg.replayHideLive = it })
                     .option(bool("Replay player models", "Render replay/clip ghosts as the real Minecraft player model wearing each player's REAL skin (fetched from the tab list; Steve/Alex fallback) instead of the tier-colored humanoid box outline. On by default. The block scale + pose transforms are runtime-verified only — if a ghost renders at the wrong size or not at all, the box outline shows as fallback.", { cfg.replayPlayerModels }) { cfg.replayPlayerModels = it })
@@ -80,7 +80,7 @@ object YaclScreenBuilder {
             // their availability live as the user switches (no need to reopen the screen).
             .group(
                 OptionGroup.createBuilder()
-                    .name(Text.literal("PlayClip"))
+                    .name(Component.literal("PlayClip"))
                     .apply {
                         fun modern() = cfg.playclipMode == IustitiaConfig.PlayclipMode.MODERN
                         // Built first so the mode listener below can grab references to toggle them.
@@ -122,8 +122,8 @@ object YaclScreenBuilder {
                             { cfg.clipSegmentTeleportThreshold }, 8.0, 512.0, { cfg.clipSegmentTeleportThreshold = it }, ::modern)
                         val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist, healthInd, totemInd, ghostEquip, clipEntities, clipEntityCap, rollingCap, segThreshold)
                         option(Option.createBuilder<IustitiaConfig.PlayclipMode>()
-                            .name(Text.literal("Playclip mode"))
-                            .description(OptionDescription.of(Text.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default MODERN (since v1.2.0 — the C2 FPS fix made Modern match the 120 cap); existing configs keep their saved choice.")))
+                            .name(Component.literal("Playclip mode"))
+                            .description(OptionDescription.of(Component.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default MODERN (since v1.2.0 — the C2 FPS fix made Modern match the 120 cap); existing configs keep their saved choice.")))
                             .binding(cfg.playclipMode, { cfg.playclipMode }, { cfg.playclipMode = it })
                             .addListener { opt, _ ->
                                 val avail = opt.pendingValue() == IustitiaConfig.PlayclipMode.MODERN
@@ -150,7 +150,7 @@ object YaclScreenBuilder {
             category.group(checkGroup(id, cc))
         }
         return YetAnotherConfigLib.createBuilder()
-            .title(Text.literal("Iustitia"))
+            .title(Component.literal("Iustitia"))
             .save {
                 ConfigManager.save()
                 // The persistence toggle may have just flipped — react so a freshly-enabled store
@@ -164,7 +164,7 @@ object YaclScreenBuilder {
 
     private fun checkGroup(id: String, cc: IustitiaConfig.CheckConfig): OptionGroup {
         val b = OptionGroup.createBuilder()
-            .name(Text.literal(id))
+            .name(Component.literal(id))
             .option(bool("Enabled", "Toggle the $id check.", { cc.enabled }) { cc.enabled = it })
             .option(double("Setback VL", "Alert only when VL exceeds this.", { cc.setbackVL }, 0.0, 100.0) { cc.setbackVL = it })
             .option(double("Decay / tick", "VL reduced per clean tick.", { cc.decay }, 0.0, 5.0) { cc.decay = it })
@@ -189,24 +189,24 @@ object YaclScreenBuilder {
 
     private fun bool(name: String, desc: String, getter: () -> Boolean, setter: (Boolean) -> Unit): Option<Boolean> =
         Option.createBuilder<Boolean>()
-            .name(Text.literal(name))
-            .description(OptionDescription.of(Text.literal(desc)))
+            .name(Component.literal(name))
+            .description(OptionDescription.of(Component.literal(desc)))
             .binding(getter(), getter, setter)
             .controller { opt -> BooleanControllerBuilder.create(opt) }
             .build()
 
     private fun int(name: String, desc: String, getter: () -> Int, min: Int, max: Int, setter: (Int) -> Unit): Option<Int> =
         Option.createBuilder<Int>()
-            .name(Text.literal(name))
-            .description(OptionDescription.of(Text.literal(desc)))
+            .name(Component.literal(name))
+            .description(OptionDescription.of(Component.literal(desc)))
             .binding(getter(), getter, setter)
             .controller { opt -> IntegerFieldControllerBuilder.create(opt).range(min, max) }
             .build()
 
     private fun double(name: String, desc: String, getter: () -> Double, min: Double, max: Double, setter: (Double) -> Unit): Option<Double> =
         Option.createBuilder<Double>()
-            .name(Text.literal(name))
-            .description(OptionDescription.of(Text.literal(desc)))
+            .name(Component.literal(name))
+            .description(OptionDescription.of(Component.literal(desc)))
             .binding(getter(), getter, setter)
             .controller { opt -> DoubleFieldControllerBuilder.create(opt).range(min, max) }
             .build()
@@ -214,8 +214,8 @@ object YaclScreenBuilder {
     /** [double] + an availability snapshot — see [boolAvail]. */
     private fun doubleAvail(name: String, desc: String, getter: () -> Double, min: Double, max: Double, setter: (Double) -> Unit, available: () -> Boolean): Option<Double> =
         Option.createBuilder<Double>()
-            .name(Text.literal(name))
-            .description(OptionDescription.of(Text.literal(desc)))
+            .name(Component.literal(name))
+            .description(OptionDescription.of(Component.literal(desc)))
             .binding(getter(), getter, setter)
             .available(available())
             .controller { opt -> DoubleFieldControllerBuilder.create(opt).range(min, max) }
@@ -226,8 +226,8 @@ object YaclScreenBuilder {
      *  re-toggles [Option.setAvailable] live on a switch, so the snapshot only fixes the initial state. */
     private fun boolAvail(name: String, desc: String, getter: () -> Boolean, setter: (Boolean) -> Unit, available: () -> Boolean): Option<Boolean> =
         Option.createBuilder<Boolean>()
-            .name(Text.literal(name))
-            .description(OptionDescription.of(Text.literal(desc)))
+            .name(Component.literal(name))
+            .description(OptionDescription.of(Component.literal(desc)))
             .binding(getter(), getter, setter)
             .available(available())
             .controller { opt -> BooleanControllerBuilder.create(opt) }
@@ -236,8 +236,8 @@ object YaclScreenBuilder {
     /** Same as [int] but with an availability snapshot — see [boolAvail]. */
     private fun intAvail(name: String, desc: String, getter: () -> Int, min: Int, max: Int, setter: (Int) -> Unit, available: () -> Boolean): Option<Int> =
         Option.createBuilder<Int>()
-            .name(Text.literal(name))
-            .description(OptionDescription.of(Text.literal(desc)))
+            .name(Component.literal(name))
+            .description(OptionDescription.of(Component.literal(desc)))
             .binding(getter(), getter, setter)
             .available(available())
             .controller { opt -> IntegerFieldControllerBuilder.create(opt).range(min, max) }

@@ -34,7 +34,7 @@ data class AABB(
 
     companion object {
         /**
-         * Box centered horizontally on (cx,cz) with feet at cy, given [width] and [height].
+         * AABB centered horizontally on (cx,cz) with feet at cy, given [width] and [height].
          * Matches the MC player hitbox layout (feet at pos.y, body extends upward).
          */
         fun around(cx: Double, cy: Double, cz: Double, width: Double, height: Double): AABB {

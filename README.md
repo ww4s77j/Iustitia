@@ -19,7 +19,7 @@ Detects **both 1.8-era and 1.21.11-era cheats** by passively observing *other* p
 - **Minecraft 26.3.** The mod now runs on 26.3 (Fabric): the source tree is migrated to Mojang official names and the 26.3 render/packet APIs, and was verified live in a 233-mod production instance.
 - **Multi-version builds with Stonecutter.** The project is now a [Stonecutter](https://stonecutter.kikugie.dev/) workspace — one source tree, one jar per Minecraft version (`iustitia-1.4.1+26.3.jar`). The 1.21.11 target shares the same sources and is being re-greened with per-version conditionals; until then, the 1.21.11 jar ships from the v1.4.0 line.
 - **Everything stays in the game folder.** Mod data is written only inside the game's own directory — `<game dir>/.iustitia` (config in `config/iustitia.json`) — instead of `%APPDATA%`. On a launcher instance that is the instance's own folder (e.g. Prism's `instances/<name>/minecraft/.iustitia`).
-- **Axiom / Zoomify coexistence.** The freecam no-blackout hook is now a MixinExtras `@WrapOperation` instead of a `@Redirect`, so it chains with other mods that wrap the same camera call rather than failing to inject at startup.
+- **Axiom / Zoomify coexistence.** The freecam no-blackout hook is now a MixinExtras `@WrapOperation` instead of a `@Redirect`, so it chains with other mods that wrap the same camera call rather than failing to inject at startup. Verified with both mods present **and** with neither installed — nothing depends on either.
 
 ---
 

@@ -2,6 +2,7 @@ package dev.iustitia.config
 
 import com.google.gson.JsonParser
 import dev.iustitia.Iustitia
+import dev.iustitia.util.LegacyStoreMigration
 import net.fabricmc.loader.api.FabricLoader
 import java.nio.file.Files
 import java.nio.file.Path
@@ -408,9 +409,21 @@ object PresetManager {
         return presetsDir().resolve("$safe.json")
     }
 
+    /** One-shot guard for [presetsDir]'s legacy migration (the util's marker makes a duplicate
+     *  racing run harmless anyway). */
+    @Volatile private var legacyMigrated = false
+
     /** Presets dir, matching the rest of Iustitia's data layout: `<gameDir>/.iustitia/presets`
-     *  (same tree as clips/exemptions/notes — everything inside the game's own folder). */
-    private fun presetsDir(): Path = baseDataDir().resolve("presets")
+     *  (same tree as clips/exemptions/notes — everything inside the game's own folder). The first
+     *  resolution also runs the one-time legacy-store migration (pre-v1.4.1 custom presets). */
+    private fun presetsDir(): Path {
+        val dir = baseDataDir().resolve("presets")
+        if (!legacyMigrated) {
+            legacyMigrated = true
+            LegacyStoreMigration.migrate("presets", dir) { it.endsWith(".json") }
+        }
+        return dir
+    }
 
     /** Game-dir data dir (`<gameDir>/.iustitia`). Same resolution as
      *  [dev.iustitia.persistence.PersistenceManager] / ClipStore. */

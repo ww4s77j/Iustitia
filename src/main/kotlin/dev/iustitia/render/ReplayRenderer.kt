@@ -634,8 +634,8 @@ object ReplayRenderer {
         val skin = try { ReplaySkins.resolve(s.uuid()) } catch (_: Throwable) { return false }
         // Per-ghost walk state (rolling position-delta stride).
         val ws = walkState.computeIfAbsent(s.uuid()) { WalkState() }
-        // A FRESH AvatarRenderState per ghost per frame, deliberately — NOT the per-type reuse
-        // the entity ghosts below use, and the difference is not stylistic. This path submits the skin
+        // A FRESH AvatarRenderState per ghost per frame, deliberately — the entity ghosts below do
+        // the same now, for the same reason. This path submits the skin
         // through the deferred entity-pass queue at the bottom of this method, and
         // `SubmitNodeStorage.ModelCommand` is a record that holds the render state and is
         // drained after the whole ghost loop. One shared state per type would therefore be overwritten
@@ -860,25 +860,13 @@ object ReplayRenderer {
     /** typeId → a fabricated prototype non-living entity. */
     private val nonLivingPrototypeCache = ConcurrentHashMap<String, Entity?>()
 
-    /**
-     * typeId to the ONE render state that type's ghost is drawn with, every frame.
-     *
-     * Both entity-ghost paths used to call `createRenderState()` per ghost per frame, building a fresh
-     * object solely to overwrite all of it and hand it to a consumer that reads it synchronously.
-     * Reuse is sound here because the state is keyed per TYPE (so the concrete state class always
-     * matches the renderer that fills it), every field the draw reads is re-derived each frame by
-     * `updateRenderState` from the cached prototype plus the explicit overwrites below, and nothing
-     * retains the reference past the call -- [ImmediateRenderQueue] writes its vertices immediately,
-     * and the living path renders straight into a vertex buffer.
-     *
-     * The player path must NOT do this, and its own comment no longer claims otherwise: its state is
-     * captured by the deferred `queue.submitModel` command and drained after the ghost loop. Cleared in
-     * [clearGhostCaches] so a replay in another world cannot reuse a state seeded from the previous
-     * world's prototype.
-     */
-    private val entityStateCache = ConcurrentHashMap<String, LivingEntityRenderState>()
-    /** typeId to the reused render state for a non-living ghost (boats/minecarts); see [entityStateCache]. */
-    private val nonLivingStateCache = ConcurrentHashMap<String, EntityRenderState>()
+    // Render states are allocated FRESH per ghost per frame on EVERY ghost path — there is deliberately
+    // no per-type state cache here. All three paths (players, living mobs, boats/minecarts) hand their
+    // state to a DEFERRED submission (`SubmitNodeStorage.ModelCommand` is a record holding the render
+    // state, drained only after the whole ghost loop), so one state shared per type would be
+    // overwritten by the next same-type ghost long before the first one's geometry was drawn — every
+    // same-type ghost would render with the last one's pose. (`createRenderState()` is the cheap half:
+    // the profiler puts all of drawModel at ~0.4% of a frame.) Fail-open everywhere, as before.
 
     /** Resolve (and cache) the vanilla living renderer for a captured entity type id, or null. */
     private fun entityRendererFor(typeId: String): LivingEntityRenderer<*, *, *>? {
@@ -947,10 +935,11 @@ object ReplayRenderer {
         val cached = entityRendererFor(e.typeId) ?: return
         @Suppress("UNCHECKED_CAST")
         val r = cached as LivingEntityRenderer<net.minecraft.world.entity.LivingEntity, LivingEntityRenderState, EntityModel<LivingEntityRenderState>>
-        // ONE state per entity type, reused every frame (see [entityStateCache] for why that is safe
-        // here and not on the player path). Fail-open → skip this ghost.
+        // A FRESH state per ghost per frame: the submission below is deferred (drained after the whole
+        // ghost loop), so a per-type shared state would show every same-type mob with the last one's
+        // pose. Same reasoning as the player path above. Fail-open → skip this ghost.
         val state: LivingEntityRenderState = try {
-            entityStateCache.getOrPut(e.typeId) { r.createRenderState() }
+            r.createRenderState()
         } catch (_: Throwable) { return }
         val model: EntityModel<LivingEntityRenderState> = try { r.model } catch (_: Throwable) { return }
 
@@ -1026,8 +1015,8 @@ object ReplayRenderer {
 
     /**
      * Draw one non-living entity ghost (boat/minecart) at its recorded pose via the vanilla entity
-     * renderer + [ImmediateRenderQueue] (which turns the renderer's deferred submissions into direct
-     * vertex writes). Culled beyond [ENTITY_RENDER_RADIUS]. Fail-open.
+     * renderer; `EntityRenderer.submit` forwards into the deferred collector. Culled beyond
+     * [ENTITY_RENDER_RADIUS]. Fail-open.
      */
     private fun drawNonLivingEntityGhost(
         matrices: PoseStack,
@@ -1049,11 +1038,10 @@ object ReplayRenderer {
         val cached = nonLivingRendererFor(e.typeId) ?: return
         @Suppress("UNCHECKED_CAST")
         val r = cached as EntityRenderer<Entity, EntityRenderState>
-        // ONE state per entity type, reused every frame — same rationale as [entityStateCache], and
-        // even safer here: [ImmediateRenderQueue] drains each submission on the spot, so this state is
-        // never held past the call below.
+        // A FRESH state per ghost per frame — the submission below is deferred, so a per-type shared
+        // state would show every same-type ghost with the last one's pose (same as above).
         val state: EntityRenderState = try {
-            nonLivingStateCache.getOrPut(e.typeId) { r.createRenderState() }
+            r.createRenderState()
         } catch (_: Throwable) { return }
 
         val proto = nonLivingPrototypeCache[e.typeId]
@@ -1088,7 +1076,7 @@ object ReplayRenderer {
 
 
     /** Drop every replay-scoped ghost cache (called from [ReplayState.stop]). Idempotent.
-     *  The renderer/prototype/state caches are the important ones: their entries are fabricated
+     *  The renderer/prototype caches are the important ones: their entries are fabricated
      *  against the `mc.level`/dispatcher live at LOOKUP time, so a clip played in a
      *  different world/dimension after this replay would keep rendering ghosts with
      *  renderers + prototype entities bound to the previous world (the old version cleared
@@ -1103,8 +1091,6 @@ object ReplayRenderer {
             entityPrototypeCache.clear()
             nonLivingRendererCache.clear()
             nonLivingPrototypeCache.clear()
-            entityStateCache.clear()
-            nonLivingStateCache.clear()
             stackCache.clear()
             playerRenderer = null
             cachedAlertLabels = emptyMap()
